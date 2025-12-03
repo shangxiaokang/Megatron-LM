@@ -1,0 +1,1365 @@
+Megatron server will run on 10.66.3.2:6005
+3: lyris0001,0,2,61991,8
+1: lyris0001,0,2,61991,8
+2: lyris0001,0,2,61991,8
+0: Collecting flask-restful
+0:   Downloading Flask_RESTful-0.3.10-py2.py3-none-any.whl.metadata (1.0 kB)
+0: Requirement already satisfied: accelerate in /usr/local/lib/python3.12/dist-packages (1.12.0)
+0: Collecting aniso8601>=0.82 (from flask-restful)
+0:   Downloading aniso8601-10.0.1-py2.py3-none-any.whl.metadata (23 kB)
+0: Collecting Flask>=0.8 (from flask-restful)
+0:   Downloading flask-3.1.2-py3-none-any.whl.metadata (3.2 kB)
+0: Requirement already satisfied: six>=1.3.0 in /usr/local/lib/python3.12/dist-packages (from flask-restful) (1.16.0)
+0: Requirement already satisfied: pytz in /usr/local/lib/python3.12/dist-packages (from flask-restful) (2023.4)
+0: Requirement already satisfied: numpy>=1.17 in /usr/local/lib/python3.12/dist-packages (from accelerate) (1.26.4)
+0: Requirement already satisfied: packaging>=20.0 in /usr/local/lib/python3.12/dist-packages (from accelerate) (23.2)
+0: Requirement already satisfied: psutil in /usr/local/lib/python3.12/dist-packages (from accelerate) (7.0.0)
+0: Requirement already satisfied: pyyaml in /usr/local/lib/python3.12/dist-packages (from accelerate) (6.0.2)
+0: Requirement already satisfied: torch>=2.0.0 in /usr/local/lib/python3.12/dist-packages (from accelerate) (2.8.0a0+34c6371d24.nv25.8)
+0: Requirement already satisfied: huggingface_hub>=0.21.0 in /usr/local/lib/python3.12/dist-packages (from accelerate) (0.36.0)
+0: Requirement already satisfied: safetensors>=0.4.3 in /usr/local/lib/python3.12/dist-packages (from accelerate) (0.6.2)
+0: Collecting blinker>=1.9.0 (from Flask>=0.8->flask-restful)
+0:   Downloading blinker-1.9.0-py3-none-any.whl.metadata (1.6 kB)
+0: Requirement already satisfied: click>=8.1.3 in /usr/local/lib/python3.12/dist-packages (from Flask>=0.8->flask-restful) (8.2.1)
+0: Collecting itsdangerous>=2.2.0 (from Flask>=0.8->flask-restful)
+0:   Downloading itsdangerous-2.2.0-py3-none-any.whl.metadata (1.9 kB)
+0: Requirement already satisfied: jinja2>=3.1.2 in /usr/local/lib/python3.12/dist-packages (from Flask>=0.8->flask-restful) (3.1.6)
+0: Requirement already satisfied: markupsafe>=2.1.1 in /usr/local/lib/python3.12/dist-packages (from Flask>=0.8->flask-restful) (3.0.2)
+0: Requirement already satisfied: werkzeug>=3.1.0 in /usr/local/lib/python3.12/dist-packages (from Flask>=0.8->flask-restful) (3.1.3)
+0: Requirement already satisfied: filelock in /usr/local/lib/python3.12/dist-packages (from huggingface_hub>=0.21.0->accelerate) (3.18.0)
+0: Requirement already satisfied: fsspec>=2023.5.0 in /usr/local/lib/python3.12/dist-packages (from huggingface_hub>=0.21.0->accelerate) (2025.3.0)
+0: Requirement already satisfied: requests in /usr/local/lib/python3.12/dist-packages (from huggingface_hub>=0.21.0->accelerate) (2.32.4)
+0: Requirement already satisfied: tqdm>=4.42.1 in /usr/local/lib/python3.12/dist-packages (from huggingface_hub>=0.21.0->accelerate) (4.67.1)
+0: Requirement already satisfied: typing-extensions>=3.7.4.3 in /usr/local/lib/python3.12/dist-packages (from huggingface_hub>=0.21.0->accelerate) (4.14.1)
+0: Requirement already satisfied: hf-xet<2.0.0,>=1.1.3 in /usr/local/lib/python3.12/dist-packages (from huggingface_hub>=0.21.0->accelerate) (1.2.0)
+0: Requirement already satisfied: sympy>=1.13.3 in /usr/local/lib/python3.12/dist-packages (from torch>=2.0.0->accelerate) (1.14.0)
+0: Requirement already satisfied: networkx in /usr/local/lib/python3.12/dist-packages (from torch>=2.0.0->accelerate) (3.5)
+0: Requirement already satisfied: setuptools in /usr/local/lib/python3.12/dist-packages (from torch>=2.0.0->accelerate) (79.0.1)
+0: Requirement already satisfied: mpmath<1.4,>=1.1.0 in /usr/local/lib/python3.12/dist-packages (from sympy>=1.13.3->torch>=2.0.0->accelerate) (1.3.0)
+0: Requirement already satisfied: charset_normalizer<4,>=2 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface_hub>=0.21.0->accelerate) (3.4.2)
+0: Requirement already satisfied: idna<4,>=2.5 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface_hub>=0.21.0->accelerate) (3.10)
+0: Requirement already satisfied: urllib3<3,>=1.21.1 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface_hub>=0.21.0->accelerate) (2.0.7)
+0: Requirement already satisfied: certifi>=2017.4.17 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface_hub>=0.21.0->accelerate) (2025.8.3)
+0: Downloading Flask_RESTful-0.3.10-py2.py3-none-any.whl (26 kB)
+0: Downloading aniso8601-10.0.1-py2.py3-none-any.whl (52 kB)
+0: Downloading flask-3.1.2-py3-none-any.whl (103 kB)
+0: Downloading blinker-1.9.0-py3-none-any.whl (8.5 kB)
+0: Downloading itsdangerous-2.2.0-py3-none-any.whl (16 kB)
+0: Installing collected packages: aniso8601, itsdangerous, blinker, Flask, flask-restful
+0: 
+0: Successfully installed Flask-3.1.2 aniso8601-10.0.1 blinker-1.9.0 flask-restful-0.3.10 itsdangerous-2.2.0
+4: lyris0001,1,2,61991,8
+5: lyris0001,1,2,61991,8
+6: lyris0001,1,2,61991,8
+7: lyris0001,1,2,61991,8
+0: Collecting transformers==4.52
+0:   Downloading transformers-4.52.0-py3-none-any.whl.metadata (38 kB)
+0: Requirement already satisfied: filelock in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (3.18.0)
+0: Requirement already satisfied: huggingface-hub<1.0,>=0.30.0 in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (0.36.0)
+0: Requirement already satisfied: numpy>=1.17 in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (1.26.4)
+0: Requirement already satisfied: packaging>=20.0 in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (23.2)
+0: Requirement already satisfied: pyyaml>=5.1 in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (6.0.2)
+0: Requirement already satisfied: regex!=2019.12.17 in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (2025.7.34)
+0: Requirement already satisfied: requests in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (2.32.4)
+0: Collecting tokenizers<0.22,>=0.21 (from transformers==4.52)
+0:   Downloading tokenizers-0.21.4-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (6.7 kB)
+0: Requirement already satisfied: safetensors>=0.4.3 in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (0.6.2)
+0: Requirement already satisfied: tqdm>=4.27 in /usr/local/lib/python3.12/dist-packages (from transformers==4.52) (4.67.1)
+0: Requirement already satisfied: fsspec>=2023.5.0 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.30.0->transformers==4.52) (2025.3.0)
+0: Requirement already satisfied: typing-extensions>=3.7.4.3 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.30.0->transformers==4.52) (4.14.1)
+0: Requirement already satisfied: hf-xet<2.0.0,>=1.1.3 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.30.0->transformers==4.52) (1.2.0)
+0: Requirement already satisfied: charset_normalizer<4,>=2 in /usr/local/lib/python3.12/dist-packages (from requests->transformers==4.52) (3.4.2)
+0: Requirement already satisfied: idna<4,>=2.5 in /usr/local/lib/python3.12/dist-packages (from requests->transformers==4.52) (3.10)
+0: Requirement already satisfied: urllib3<3,>=1.21.1 in /usr/local/lib/python3.12/dist-packages (from requests->transformers==4.52) (2.0.7)
+0: Requirement already satisfied: certifi>=2017.4.17 in /usr/local/lib/python3.12/dist-packages (from requests->transformers==4.52) (2025.8.3)
+0: Downloading transformers-4.52.0-py3-none-any.whl (10.5 MB)
+0:    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 10.5/10.5 MB 48.2 MB/s  0:00:00
+0: Downloading tokenizers-0.21.4-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (3.0 MB)
+0:    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 3.0/3.0 MB 128.0 MB/s  0:00:00
+0: Installing collected packages: tokenizers, transformers
+0:   Attempting uninstall: tokenizers
+0:     Found existing installation: tokenizers 0.22.1
+0:     Uninstalling tokenizers-0.22.1:
+0:       Successfully uninstalled tokenizers-0.22.1
+0:   Attempting uninstall: transformers
+0:     Found existing installation: transformers 4.57.3
+0:     Uninstalling transformers-4.57.3:
+0:       Successfully uninstalled transformers-4.57.3
+0: 
+0: Successfully installed tokenizers-0.21.4 transformers-4.52.0
+0: Collecting tokenizers==0.21.0
+0:   Downloading tokenizers-0.21.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl.metadata (6.7 kB)
+0: Requirement already satisfied: huggingface-hub<1.0,>=0.16.4 in /usr/local/lib/python3.12/dist-packages (from tokenizers==0.21.0) (0.36.0)
+0: Requirement already satisfied: filelock in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (3.18.0)
+0: Requirement already satisfied: fsspec>=2023.5.0 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (2025.3.0)
+0: Requirement already satisfied: packaging>=20.9 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (23.2)
+0: Requirement already satisfied: pyyaml>=5.1 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (6.0.2)
+0: Requirement already satisfied: requests in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (2.32.4)
+0: Requirement already satisfied: tqdm>=4.42.1 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (4.67.1)
+0: Requirement already satisfied: typing-extensions>=3.7.4.3 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (4.14.1)
+0: Requirement already satisfied: hf-xet<2.0.0,>=1.1.3 in /usr/local/lib/python3.12/dist-packages (from huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (1.2.0)
+0: Requirement already satisfied: charset_normalizer<4,>=2 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (3.4.2)
+0: Requirement already satisfied: idna<4,>=2.5 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (3.10)
+0: Requirement already satisfied: urllib3<3,>=1.21.1 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (2.0.7)
+0: Requirement already satisfied: certifi>=2017.4.17 in /usr/local/lib/python3.12/dist-packages (from requests->huggingface-hub<1.0,>=0.16.4->tokenizers==0.21.0) (2025.8.3)
+0: Downloading tokenizers-0.21.0-cp39-abi3-manylinux_2_17_aarch64.manylinux2014_aarch64.whl (2.9 MB)
+0:    ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ 2.9/2.9 MB 27.5 MB/s  0:00:00
+0: Installing collected packages: tokenizers
+0:   Attempting uninstall: tokenizers
+0:     Found existing installation: tokenizers 0.21.4
+0:     Uninstalling tokenizers-0.21.4:
+0:       Successfully uninstalled tokenizers-0.21.4
+0: Successfully installed tokenizers-0.21.0
+0: lyris0001,0,2,61991,8
+0: Setting num_layers to 27 from checkpoint
+1: Setting num_layers to 27 from checkpoint
+1: Setting hidden_size to 2048 from checkpoint
+3: Setting num_layers to 27 from checkpoint
+3: Setting hidden_size to 2048 from checkpoint
+0: Setting hidden_size to 2048 from checkpoint
+0: Setting ffn_hidden_size to 11264 from checkpoint
+0: Setting seq_length to 8192 from checkpoint
+0: Setting num_attention_heads to 16 from checkpoint
+0: Setting num_query_groups to 16 from checkpoint
+1: Setting ffn_hidden_size to 11264 from checkpoint
+1: Setting seq_length to 8192 from checkpoint
+1: Setting num_attention_heads to 16 from checkpoint
+3: Setting ffn_hidden_size to 11264 from checkpoint
+3: Setting seq_length to 8192 from checkpoint
+3: Setting num_attention_heads to 16 from checkpoint
+0: Setting group_query_attention to False from checkpoint
+0: Setting kv_channels to 128 from checkpoint
+0: Setting max_position_embeddings to 8192 from checkpoint
+0: Setting position_embedding_type to rope from checkpoint
+0: Setting add_position_embedding to True from checkpoint
+0: Setting use_rotary_position_embeddings to False from checkpoint
+0: Setting rotary_base to 50000 from checkpoint
+1: Setting num_query_groups to 16 from checkpoint
+1: Setting group_query_attention to False from checkpoint
+1: Setting kv_channels to 128 from checkpoint
+1: Setting max_position_embeddings to 8192 from checkpoint
+1: Setting position_embedding_type to rope from checkpoint
+1: Setting add_position_embedding to True from checkpoint
+3: Setting num_query_groups to 16 from checkpoint
+3: Setting group_query_attention to False from checkpoint
+3: Setting kv_channels to 128 from checkpoint
+3: Setting max_position_embeddings to 8192 from checkpoint
+3: Setting position_embedding_type to rope from checkpoint
+3: Setting add_position_embedding to True from checkpoint
+3: Setting use_rotary_position_embeddings to False from checkpoint
+0: Setting rotary_percent to 1.0 from checkpoint
+0: Setting rotary_interleaved to False from checkpoint
+0: Setting add_bias_linear to False from checkpoint
+0: Setting add_qkv_bias to False from checkpoint
+0: Setting squared_relu to False from checkpoint
+1: Setting use_rotary_position_embeddings to False from checkpoint
+1: Setting rotary_base to 50000 from checkpoint
+1: Setting rotary_percent to 1.0 from checkpoint
+1: Setting rotary_interleaved to False from checkpoint
+1: Setting add_bias_linear to False from checkpoint
+3: Setting rotary_base to 50000 from checkpoint
+3: Setting rotary_percent to 1.0 from checkpoint
+3: Setting rotary_interleaved to False from checkpoint
+3: Setting add_bias_linear to False from checkpoint
+3: Setting add_qkv_bias to False from checkpoint
+0: Setting swiglu to True from checkpoint
+0: Setting untie_embeddings_and_output_weights to True from checkpoint
+0: Setting apply_layernorm_1p to False from checkpoint
+0: Setting normalization to RMSNorm from checkpoint
+1: Setting add_qkv_bias to False from checkpoint
+1: Setting squared_relu to False from checkpoint
+3: Setting squared_relu to False from checkpoint
+3: Setting swiglu to True from checkpoint
+0: Setting apply_query_key_layer_scaling to False from checkpoint
+0: Setting attention_dropout to 0.0 from checkpoint
+0: Setting hidden_dropout to 0.0 from checkpoint
+1: Setting swiglu to True from checkpoint
+1: Setting untie_embeddings_and_output_weights to True from checkpoint
+1: Setting apply_layernorm_1p to False from checkpoint
+3: Setting untie_embeddings_and_output_weights to True from checkpoint
+3: Setting apply_layernorm_1p to False from checkpoint
+3: Setting normalization to RMSNorm from checkpoint
+0: Checkpoint did not provide arguments hybrid_override_pattern
+0: Checkpoint did not provide arguments spec
+0: Setting hybrid_attention_ratio to 0.0 from checkpoint
+1: Setting normalization to RMSNorm from checkpoint
+1: Setting apply_query_key_layer_scaling to False from checkpoint
+1: Setting attention_dropout to 0.0 from checkpoint
+2: Setting num_layers to 27 from checkpoint
+3: Setting apply_query_key_layer_scaling to False from checkpoint
+3: Setting attention_dropout to 0.0 from checkpoint
+3: Setting hidden_dropout to 0.0 from checkpoint
+3: Checkpoint did not provide arguments hybrid_override_pattern
+0: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+0: Setting num_experts to 64 from checkpoint
+0: Setting moe_layer_freq to 1 from checkpoint
+0: Setting moe_ffn_hidden_size to 1408 from checkpoint
+1: Setting hidden_dropout to 0.0 from checkpoint
+1: Checkpoint did not provide arguments hybrid_override_pattern
+1: Checkpoint did not provide arguments spec
+2: Setting hidden_size to 2048 from checkpoint
+2: Setting ffn_hidden_size to 11264 from checkpoint
+3: Checkpoint did not provide arguments spec
+3: Setting hybrid_attention_ratio to 0.0 from checkpoint
+3: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+3: Setting num_experts to 64 from checkpoint
+0: Setting moe_router_topk to 6 from checkpoint
+0: Setting moe_router_pre_softmax to True from checkpoint
+0: Setting moe_grouped_gemm to True from checkpoint
+0: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+1: Setting hybrid_attention_ratio to 0.0 from checkpoint
+1: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+1: Setting num_experts to 64 from checkpoint
+2: Setting seq_length to 8192 from checkpoint
+2: Setting num_attention_heads to 16 from checkpoint
+2: Setting num_query_groups to 16 from checkpoint
+3: Setting moe_layer_freq to 1 from checkpoint
+3: Setting moe_ffn_hidden_size to 1408 from checkpoint
+3: Setting moe_router_topk to 6 from checkpoint
+0: Setting mamba_state_dim to 128 from checkpoint
+0: Setting mamba_head_dim to 64 from checkpoint
+0: Setting mamba_num_groups to 8 from checkpoint
+0: Checkpoint did not provide arguments mamba_num_heads
+1: Setting moe_layer_freq to 1 from checkpoint
+1: Setting moe_ffn_hidden_size to 1408 from checkpoint
+1: Setting moe_router_topk to 6 from checkpoint
+2: Setting group_query_attention to False from checkpoint
+2: Setting kv_channels to 128 from checkpoint
+2: Setting max_position_embeddings to 8192 from checkpoint
+3: Setting moe_router_pre_softmax to True from checkpoint
+3: Setting moe_grouped_gemm to True from checkpoint
+3: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+0: Setting is_hybrid_model to False from checkpoint
+0: Checkpoint did not provide arguments heterogeneous_layers_config_path
+0: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+1: Setting moe_router_pre_softmax to True from checkpoint
+1: Setting moe_grouped_gemm to True from checkpoint
+1: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+2: Setting position_embedding_type to rope from checkpoint
+2: Setting add_position_embedding to True from checkpoint
+2: Setting use_rotary_position_embeddings to False from checkpoint
+3: Setting mamba_state_dim to 128 from checkpoint
+3: Setting mamba_head_dim to 64 from checkpoint
+3: Setting mamba_num_groups to 8 from checkpoint
+0: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+0: Setting tiktoken_pattern to v2 from checkpoint
+0: Setting padded_vocab_size to 163968 from checkpoint
+1: Setting mamba_state_dim to 128 from checkpoint
+1: Setting mamba_head_dim to 64 from checkpoint
+1: Setting mamba_num_groups to 8 from checkpoint
+1: Checkpoint did not provide arguments mamba_num_heads
+2: Setting rotary_base to 50000 from checkpoint
+2: Setting rotary_percent to 1.0 from checkpoint
+2: Setting rotary_interleaved to False from checkpoint
+2: Setting add_bias_linear to False from checkpoint
+3: Checkpoint did not provide arguments mamba_num_heads
+3: Setting is_hybrid_model to False from checkpoint
+3: Checkpoint did not provide arguments heterogeneous_layers_config_path
+3: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+0: using world size: 8, data-parallel size: 8, context-parallel size: 1, hierarchical context-parallel sizes: None, tensor-model-parallel size: 1, pipeline-model-parallel size: 1
+1: Setting is_hybrid_model to False from checkpoint
+1: Checkpoint did not provide arguments heterogeneous_layers_config_path
+1: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+1: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+2: Setting add_qkv_bias to False from checkpoint
+2: Setting squared_relu to False from checkpoint
+2: Setting swiglu to True from checkpoint
+2: Setting untie_embeddings_and_output_weights to True from checkpoint
+3: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+3: Setting tiktoken_pattern to v2 from checkpoint
+3: Setting padded_vocab_size to 163968 from checkpoint
+0: WARNING: overriding default arguments for no_load_optim:True                        with no_load_optim:True
+0: WARNING: overriding default arguments for exit_on_missing_checkpoint:True                        with exit_on_missing_checkpoint:True
+1: Setting tiktoken_pattern to v2 from checkpoint
+1: Setting padded_vocab_size to 163968 from checkpoint
+2: Setting apply_layernorm_1p to False from checkpoint
+2: Setting normalization to RMSNorm from checkpoint
+2: Setting apply_query_key_layer_scaling to False from checkpoint
+2: Setting attention_dropout to 0.0 from checkpoint
+0: setting global batch size to 1024
+0: Number of virtual stages per pipeline stage: None
+2: Setting hidden_dropout to 0.0 from checkpoint
+2: Checkpoint did not provide arguments hybrid_override_pattern
+0: accumulate and all-reduce gradients in fp32 for bfloat16 data type.
+2: Checkpoint did not provide arguments spec
+2: Setting hybrid_attention_ratio to 0.0 from checkpoint
+0: using torch.bfloat16 for parameters ...
+2: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+2: Setting num_experts to 64 from checkpoint
+2: Setting moe_layer_freq to 1 from checkpoint
+2: Setting moe_ffn_hidden_size to 1408 from checkpoint
+2: Setting moe_router_topk to 6 from checkpoint
+2: Setting moe_router_pre_softmax to True from checkpoint
+2: Setting moe_grouped_gemm to True from checkpoint
+2: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+2: Setting mamba_state_dim to 128 from checkpoint
+2: Setting mamba_head_dim to 64 from checkpoint
+2: Setting mamba_num_groups to 8 from checkpoint
+2: Checkpoint did not provide arguments mamba_num_heads
+2: Setting is_hybrid_model to False from checkpoint
+2: Checkpoint did not provide arguments heterogeneous_layers_config_path
+2: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+0: ------------------------ arguments ------------------------
+2: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+2: Setting tiktoken_pattern to v2 from checkpoint
+2: Setting padded_vocab_size to 163968 from checkpoint
+0:   account_for_embedding_in_pipeline_split ......... False
+0:   account_for_loss_in_pipeline_split .............. False
+0:   accumulate_allreduce_grads_in_fp32 .............. True
+0:   activation_func_clamp_value ..................... None
+0:   adam_beta1 ...................................... 0.9
+0:   adam_beta2 ...................................... 0.999
+0:   adam_eps ........................................ 1e-08
+0:   add_bias_linear ................................. False
+0:   add_position_embedding .......................... True
+0:   add_qkv_bias .................................... False
+0:   adlr_autoresume ................................. False
+0:   adlr_autoresume_interval ........................ 1000
+0:   align_grad_reduce ............................... True
+0:   align_param_gather .............................. False
+0:   allow_ambiguous_pad_tokens ...................... False
+0:   app_tag_run_name ................................ None
+0:   app_tag_run_version ............................. 0.0.0
+0:   apply_layernorm_1p .............................. False
+0:   apply_query_key_layer_scaling ................... False
+0:   apply_residual_connection_post_layernorm ........ False
+0:   apply_rope_fusion ............................... False
+0:   async_save ...................................... None
+0:   async_tensor_model_parallel_allreduce ........... True
+0:   attention_backend ............................... AttnBackend.auto
+0:   attention_dropout ............................... 0.0
+0:   attention_output_gate ........................... False
+0:   attention_softmax_in_fp32 ....................... False
+0:   auto_detect_ckpt_format ......................... False
+0:   barrier_with_L1_time ............................ True
+0:   bert_binary_head ................................ True
+0:   bert_embedder_type .............................. megatron
+0:   bert_load ....................................... None
+0:   bf16 ............................................ True
+0:   bias_dropout_fusion ............................. True
+0:   bias_gelu_fusion ................................ False
+0:   bias_swiglu_fusion .............................. True
+0:   biencoder_projection_dim ........................ 0
+0:   biencoder_shared_query_context_model ............ False
+0:   block_data_path ................................. None
+0:   cache_mla_latents ............................... False
+0:   calc_ft_timeouts ................................ False
+0:   calculate_per_token_loss ........................ False
+0:   check_for_large_grads ........................... False
+0:   check_for_nan_in_loss_and_grad .................. True
+0:   check_for_spiky_loss ............................ False
+0:   check_weight_hash_across_dp_replicas_interval ... None
+0:   ckpt_assume_constant_structure .................. False
+0:   ckpt_convert_format ............................. None
+0:   ckpt_convert_save ............................... None
+0:   ckpt_convert_update_legacy_dist_opt_format ...... False
+0:   ckpt_format ..................................... torch_dist
+0:   ckpt_fully_parallel_load ........................ False
+0:   ckpt_fully_parallel_save ........................ True
+0:   ckpt_fully_parallel_save_deprecated ............. False
+0:   ckpt_step ....................................... 174000
+0:   classes_fraction ................................ 1.0
+0:   clip_grad ....................................... 1.0
+0:   clone_scatter_output_in_embedding ............... True
+0:   config_logger_dir ............................... 
+0:   consumed_train_samples .......................... 0
+0:   consumed_valid_samples .......................... 0
+0:   context_parallel_size ........................... 1
+0:   cp_comm_type .................................... ['p2p']
+0:   create_attention_mask_in_dataloader ............. True
+0:   cross_entropy_fusion_impl ....................... native
+0:   cross_entropy_loss_fusion ....................... False
+0:   cuda_graph_impl ................................. none
+0:   cuda_graph_scope ................................ full
+0:   cuda_graph_warmup_steps ......................... 3
+0:   data_args_path .................................. None
+0:   data_cache_path ................................. None
+0:   data_parallel_random_init ....................... False
+0:   data_parallel_sharding_strategy ................. no_shard
+0:   data_parallel_size .............................. 8
+0:   data_path ....................................... None
+0:   data_per_class_fraction ......................... 1.0
+0:   data_sharding ................................... True
+0:   dataloader_type ................................. single
+0:   ddp_average_in_collective ....................... False
+0:   ddp_bucket_size ................................. None
+0:   ddp_num_buckets ................................. None
+0:   ddp_pad_buckets_for_high_nccl_busbw ............. False
+0:   decode_only_cuda_graphs ......................... False
+0:   decoder_first_pipeline_num_layers ............... None
+0:   decoder_last_pipeline_num_layers ................ None
+0:   decoder_num_layers .............................. None
+0:   decoder_seq_length .............................. None
+0:   decoupled_lr .................................... None
+0:   decoupled_min_lr ................................ None
+0:   decrease_batch_size_if_needed ................... False
+0:   defer_embedding_wgrad_compute ................... False
+0:   delay_wgrad_compute ............................. False
+0:   deprecated_use_mcore_models ..................... True
+0:   deterministic_mode .............................. False
+0:   dino_bottleneck_size ............................ 256
+0:   dino_freeze_last_layer .......................... 1
+0:   dino_head_hidden_size ........................... 2048
+0:   dino_local_crops_number ......................... 10
+0:   dino_local_img_size ............................. 96
+0:   dino_norm_last_layer ............................ False
+0:   dino_teacher_temp ............................... 0.07
+0:   dino_warmup_teacher_temp ........................ 0.04
+0:   dino_warmup_teacher_temp_epochs ................. 30
+0:   disable_bf16_reduced_precision_matmul ........... False
+0:   disable_chunked_prefill ......................... False
+0:   disable_mamba_mem_eff_path ...................... False
+0:   disable_straggler_on_startup .................... False
+0:   disable_symmetric_registration .................. False
+0:   dist_ckpt_format_deprecated ..................... None
+0:   dist_ckpt_optim_fully_reshardable ............... False
+0:   dist_ckpt_save_pre_mcore_014 .................... False
+0:   dist_ckpt_strictness ............................ raise_unexpected
+0:   distrib_optim_fully_reshardable_mem_efficient ... False
+0:   distribute_saved_activations .................... False
+0:   distributed_backend ............................. nccl
+0:   distributed_timeout_minutes ..................... 60
+0:   distributed_timeout_seconds_after_init .......... None
+0:   dump_param_to_param_group_map ................... None
+0:   embedding_init_method_std ....................... None
+0:   embedding_path .................................. None
+0:   empty_unused_memory_level ....................... 0
+0:   enable_cuda_graph ............................... False
+0:   enable_experimental ............................. False
+0:   enable_ft_package ............................... False
+0:   enable_full_sharding_in_hsdp .................... False
+0:   enable_gloo_process_groups ...................... True
+0:   enable_msc ...................................... True
+0:   enable_one_logger ............................... True
+0:   encoder_num_layers .............................. 27
+0:   encoder_seq_length .............................. 8192
+0:   end_weight_decay ................................ 0.01
+0:   eod_mask_loss ................................... False
+0:   error_injection_rate ............................ 0
+0:   error_injection_type ............................ transient_error
+0:   eval_interval ................................... 1000
+0:   eval_iters ...................................... 100
+0:   evidence_data_path .............................. None
+0:   exit_duration_in_mins ........................... None
+0:   exit_interval ................................... None
+0:   exit_on_missing_checkpoint ...................... True
+0:   exit_signal_handler ............................. False
+0:   exp_avg_dtype ................................... torch.float32
+0:   exp_avg_sq_dtype ................................ torch.float32
+0:   expert_model_parallel_size ...................... 8
+0:   expert_tensor_parallel_size ..................... 1
+0:   external_cuda_graph ............................. False
+0:   ffn_hidden_size ................................. 11264
+0:   fine_grained_activation_offloading .............. False
+0:   finetune ........................................ False
+0:   first_last_layers_bf16 .......................... False
+0:   flash_decode .................................... False
+0:   fp16 ............................................ False
+0:   fp16_lm_cross_entropy ........................... False
+0:   fp32_residual_connection ........................ False
+0:   fp4 ............................................. None
+0:   fp4_param ....................................... False
+0:   fp4_recipe ...................................... nvfp4
+0:   fp8 ............................................. None
+0:   fp8_amax_compute_algo ........................... most_recent
+0:   fp8_amax_history_len ............................ 1
+0:   fp8_interval .................................... 1
+0:   fp8_margin ...................................... 0
+0:   fp8_param_gather ................................ False
+0:   fp8_recipe ...................................... delayed
+0:   fp8_wgrad ....................................... True
+0:   fsdp_double_buffer .............................. False
+0:   full_validation ................................. False
+0:   global_batch_size ............................... 1024
+0:   glu_linear_offset ............................... 0.0
+0:   grad_reduce_in_bf16 ............................. False
+0:   gradient_accumulation_fusion .................... True
+0:   gradient_reduce_div_fusion ...................... True
+0:   group_query_attention ........................... False
+0:   grpo_clamp_eps_lower ............................ 0.01
+0:   grpo_clamp_eps_upper ............................ 0.01
+0:   grpo_default_temperature ........................ 1.0
+0:   grpo_default_top_p .............................. 0
+0:   grpo_entropy_term_weight ........................ 0.0
+0:   grpo_filter_groups_with_same_reward ............. False
+0:   grpo_group_size ................................. 2
+0:   grpo_iterations ................................. 2
+0:   grpo_kl_beta .................................... 0.001
+0:   grpo_prompts_per_step ........................... 32
+0:   head_lr_mult .................................... 1.0
+0:   heterogeneous_layers_config_encoded_json ........ None
+0:   heterogeneous_layers_config_path ................ None
+0:   hidden_dropout .................................. 0.0
+0:   hidden_size ..................................... 2048
+0:   hierarchical_context_parallel_sizes ............. None
+0:   high_priority_stream_groups ..................... []
+0:   hybrid_attention_ratio .......................... 0.0
+0:   hybrid_mlp_ratio ................................ 0.0
+0:   hybrid_override_pattern ......................... None
+0:   hysteresis ...................................... 2
+0:   ict_head_size ................................... None
+0:   ict_load ........................................ None
+0:   img_h ........................................... 224
+0:   img_w ........................................... 224
+0:   indexer_batch_size .............................. 128
+0:   indexer_log_interval ............................ 1000
+0:   inference_batch_times_seqlen_threshold .......... -1
+0:   inference_dynamic_batching ...................... False
+0:   inference_dynamic_batching_block_size ........... 256
+0:   inference_dynamic_batching_buffer_guaranteed_fraction  0.2
+0:   inference_dynamic_batching_buffer_overflow_factor  None
+0:   inference_dynamic_batching_buffer_size_gb ....... 40.0
+0:   inference_dynamic_batching_max_requests_override  None
+0:   inference_dynamic_batching_max_tokens_override .. None
+0:   inference_dynamic_batching_num_cuda_graphs ...... 16
+0:   inference_dynamic_batching_track_paused_request_events  False
+0:   inference_dynamic_batching_unified_memory_level . 0
+0:   inference_max_batch_size ........................ 16
+0:   inference_max_seq_length ........................ 8192
+0:   inference_rng_tracker ........................... False
+0:   init_method_std ................................. 0.02
+0:   init_method_xavier_uniform ...................... False
+0:   init_model_with_meta_device ..................... False
+0:   initial_loss_scale .............................. 4294967296
+0:   inprocess_active_world_size ..................... 8
+0:   inprocess_barrier_timeout ....................... 120
+0:   inprocess_completion_timeout .................... 120
+0:   inprocess_empty_cuda_cache ...................... False
+0:   inprocess_granularity ........................... node
+0:   inprocess_hard_timeout .......................... 90
+0:   inprocess_heartbeat_interval .................... 30
+0:   inprocess_heartbeat_timeout ..................... 60
+0:   inprocess_last_call_wait ........................ 1
+0:   inprocess_max_iterations ........................ None
+0:   inprocess_monitor_process_interval .............. 1.0
+0:   inprocess_monitor_thread_interval ............... 1.0
+0:   inprocess_progress_watchdog_interval ............ 1.0
+0:   inprocess_restart ............................... False
+0:   inprocess_soft_timeout .......................... 60
+0:   inprocess_termination_grace_time ................ 1
+0:   is_hybrid_model ................................. False
+0:   iter_per_epoch .................................. 1250
+0:   iteration ....................................... 174000
+0:   iterations_to_skip .............................. []
+0:   keep_fp8_transpose_cache ........................ False
+0:   kitchen_config_file ............................. None
+0:   kitchen_recipe_number ........................... None
+0:   kv_channels ..................................... 128
+0:   kv_lora_rank .................................... 512
+0:   langrl_env_config ............................... None
+0:   langrl_external_server .......................... False
+0:   langrl_inference_server_conversation_template ... None
+0:   langrl_inference_server_type .................... inplace_megatron
+0:   lazy_mpu_init ................................... None
+0:   legacy_tokenizer ................................ False
+0:   linear_attention_freq ........................... None
+0:   linear_attention_type ........................... None
+0:   linear_conv_kernel_dim .......................... 4
+0:   linear_key_head_dim ............................. 128
+0:   linear_num_key_heads ............................ 16
+0:   linear_num_value_heads .......................... 32
+0:   linear_value_head_dim ........................... 128
+0:   load ............................................ /lustre/fsw/general_sa/xshang/modelscope/musecoder/moonlight/
+0:   load_main_params_from_ckpt ...................... None
+0:   local_rank ...................................... 0
+0:   log_energy ...................................... False
+0:   log_interval .................................... 100
+0:   log_loss_scale_to_tensorboard ................... True
+0:   log_memory_to_tensorboard ....................... False
+0:   log_num_zeros_in_grad ........................... False
+0:   log_params_norm ................................. False
+0:   log_progress .................................... False
+0:   log_straggler ................................... False
+0:   log_throughput .................................. False
+0:   log_timers_to_tensorboard ....................... False
+0:   log_validation_ppl_to_tensorboard ............... False
+0:   log_world_size_to_tensorboard ................... False
+0:   logging_level ................................... 50
+0:   loss_scale ...................................... None
+0:   loss_scale_window ............................... 1000
+0:   lr .............................................. None
+0:   lr_decay_iters .................................. None
+0:   lr_decay_samples ................................ None
+0:   lr_decay_style .................................. linear
+0:   lr_warmup_fraction .............................. None
+0:   lr_warmup_init .................................. 0.0
+0:   lr_warmup_iters ................................. 0
+0:   lr_warmup_samples ............................... 0
+0:   lr_wsd_decay_iters .............................. None
+0:   lr_wsd_decay_samples ............................ None
+0:   lr_wsd_decay_style .............................. exponential
+0:   main_grads_dtype ................................ torch.float32
+0:   main_params_dtype ............................... torch.float32
+0:   make_vocab_size_divisible_by .................... 128
+0:   mamba_head_dim .................................. 64
+0:   mamba_num_groups ................................ 8
+0:   mamba_num_heads ................................. None
+0:   mamba_state_dim ................................. 128
+0:   manual_gc ....................................... False
+0:   manual_gc_eval .................................. True
+0:   manual_gc_interval .............................. 0
+0:   mask_factor ..................................... 1.0
+0:   mask_prob ....................................... 0.15
+0:   mask_type ....................................... random
+0:   masked_softmax_fusion ........................... True
+0:   max_batch_size .................................. None
+0:   max_position_embeddings ......................... 8192
+0:   max_tokens_to_oom ............................... 12000000
+0:   memory_snapshot_path ............................ snapshot.pickle
+0:   merge_file ...................................... None
+0:   micro_batch_size ................................ 128
+0:   microbatch_group_size_per_vp_stage .............. None
+0:   mid_level_dataset_surplus ....................... 0.005
+0:   min_loss_scale .................................. 1.0
+0:   min_lr .......................................... 0.0
+0:   min_offloaded_tensor_size ....................... 1048576
+0:   mlp_chunks_for_prefill .......................... 1
+0:   mmap_bin_files .................................. True
+0:   mock_data ....................................... False
+0:   moe_apply_probs_on_input ........................ False
+0:   moe_aux_loss_coeff .............................. 0.0
+0:   moe_deepep_num_sms .............................. 20
+0:   moe_enable_deepep ............................... False
+0:   moe_expert_capacity_factor ...................... None
+0:   moe_extended_tp ................................. False
+0:   moe_ffn_hidden_size ............................. 1408
+0:   moe_flex_dispatcher_backend ..................... deepep
+0:   moe_grouped_gemm ................................ True
+0:   moe_hybridep_num_sms ............................ 16
+0:   moe_input_jitter_eps ............................ None
+0:   moe_layer_freq .................................. 1
+0:   moe_layer_recompute ............................. False
+0:   moe_pad_expert_input_to_capacity ................ False
+0:   moe_pad_experts_for_cuda_graph_inference ........ False
+0:   moe_per_layer_logging ........................... False
+0:   moe_permute_fusion .............................. False
+0:   moe_router_bias_update_rate ..................... 0.001
+0:   moe_router_dtype ................................ None
+0:   moe_router_enable_expert_bias ................... False
+0:   moe_router_force_load_balancing ................. False
+0:   moe_router_fusion ............................... False
+0:   moe_router_group_topk ........................... None
+0:   moe_router_load_balancing_type .................. aux_loss
+0:   moe_router_num_groups ........................... None
+0:   moe_router_padding_for_fp8 ...................... False
+0:   moe_router_padding_for_quantization ............. False
+0:   moe_router_pre_softmax .......................... True
+0:   moe_router_score_function ....................... softmax
+0:   moe_router_topk ................................. 6
+0:   moe_router_topk_scaling_factor .................. None
+0:   moe_shared_expert_gate .......................... False
+0:   moe_shared_expert_intermediate_size ............. 2816
+0:   moe_shared_expert_overlap ....................... False
+0:   moe_token_dispatcher_type ....................... allgather
+0:   moe_token_drop_policy ........................... probs
+0:   moe_upcycling_granularity ....................... 1
+0:   moe_use_legacy_grouped_gemm ..................... False
+0:   moe_use_upcycling ............................... False
+0:   moe_z_loss_coeff ................................ None
+0:   mrope_section ................................... None
+0:   mscale .......................................... 1.0
+0:   mscale_all_dim .................................. 0.0
+0:   mtp_loss_scaling_factor ......................... 0.1
+0:   mtp_num_layers .................................. None
+0:   multi_latent_attention .......................... True
+0:   multiple_validation_sets ........................ False
+0:   muon_extra_scale_factor ......................... 1.0
+0:   muon_fp32_matmul_prec ........................... medium
+0:   muon_momentum ................................... 0.9
+0:   muon_num_ns_steps ............................... 5
+0:   muon_scale_mode ................................. spectral
+0:   muon_split_qkv .................................. True
+0:   muon_tp_mode .................................... blockwise
+0:   muon_use_nesterov ............................... False
+0:   nccl_all_reduce_for_prefill ..................... False
+0:   nccl_communicator_config_path ................... None
+0:   nccl_ub ......................................... False
+0:   no_load_optim ................................... True
+0:   no_load_rng ..................................... True
+0:   no_persist_layer_norm ........................... False
+0:   no_rope_freq .................................... None
+0:   no_save_optim ................................... None
+0:   no_save_rng ..................................... None
+0:   no_weight_decay_cond_type ....................... None
+0:   non_persistent_ckpt_type ........................ None
+0:   non_persistent_global_ckpt_dir .................. None
+0:   non_persistent_local_ckpt_algo .................. fully_parallel
+0:   non_persistent_local_ckpt_dir ................... None
+0:   non_persistent_save_interval .................... None
+0:   norm_epsilon .................................... 1e-06
+0:   normalization ................................... RMSNorm
+0:   num_attention_heads ............................. 16
+0:   num_channels .................................... 3
+0:   num_classes ..................................... 1000
+0:   num_dataset_builder_threads ..................... 1
+0:   num_distributed_optimizer_instances ............. 1
+0:   num_experts ..................................... 64
+0:   num_layers ...................................... 27
+0:   num_layers_at_end_in_bf16 ....................... 1
+0:   num_layers_at_start_in_bf16 ..................... 1
+0:   num_layers_per_virtual_pipeline_stage ........... None
+0:   num_query_groups ................................ 16
+0:   num_tokens_to_generate .......................... 30
+0:   num_virtual_stages_per_pipeline_rank ............ None
+0:   num_workers ..................................... 2
+0:   object_storage_cache_path ....................... None
+0:   offload_modules ................................. []
+0:   one_logger_async ................................ False
+0:   one_logger_project .............................. megatron-lm
+0:   one_logger_run_name ............................. None
+0:   onnx_safe ....................................... None
+0:   openai_gelu ..................................... False
+0:   optimizer ....................................... adam
+0:   optimizer_cpu_offload ........................... False
+0:   optimizer_offload_fraction ...................... 1.0
+0:   output_bert_embeddings .......................... False
+0:   overlap_cpu_optimizer_d2h_h2d ................... False
+0:   overlap_grad_reduce ............................. False
+0:   overlap_moe_expert_parallel_comm ................ False
+0:   overlap_p2p_comm ................................ False
+0:   overlap_p2p_comm_warmup_flush ................... False
+0:   overlap_param_gather ............................ False
+0:   overlap_param_gather_with_optimizer_step ........ False
+0:   override_opt_param_scheduler .................... False
+0:   padded_vocab_size ............................... 163968
+0:   params_dtype .................................... torch.bfloat16
+0:   patch_dim ....................................... 16
+0:   per_split_data_args_path ........................ None
+0:   perform_initialization .......................... True
+0:   perform_rl_step ................................. False
+0:   pin_cpu_grads ................................... True
+0:   pin_cpu_params .................................. True
+0:   pipeline_model_parallel_comm_backend ............ None
+0:   pipeline_model_parallel_layout .................. None
+0:   pipeline_model_parallel_size .................... 1
+0:   port ............................................ 6005
+0:   position_embedding_type ......................... rope
+0:   pretrained_checkpoint ........................... None
+0:   profile ......................................... False
+0:   profile_ranks ................................... [0]
+0:   profile_step_end ................................ 12
+0:   profile_step_start .............................. 10
+0:   prompts ......................................... None
+0:   q_lora_rank ..................................... None
+0:   qk_head_dim ..................................... 128
+0:   qk_l2_norm ...................................... False
+0:   qk_layernorm .................................... False
+0:   qk_pos_emb_head_dim ............................. 64
+0:   query_in_block_prob ............................. 0.1
+0:   quick_geglu ..................................... False
+0:   rampup_batch_size ............................... None
+0:   rank ............................................ 0
+0:   recompute_granularity ........................... None
+0:   recompute_method ................................ None
+0:   recompute_modules ............................... None
+0:   recompute_num_layers ............................ None
+0:   record_memory_history ........................... False
+0:   relative_attention_max_distance ................. 128
+0:   relative_attention_num_buckets .................. 32
+0:   replication ..................................... False
+0:   replication_factor .............................. 2
+0:   replication_jump ................................ None
+0:   rerun_mode ...................................... validate_results
+0:   reset_attention_mask ............................ False
+0:   reset_position_ids .............................. False
+0:   result_rejected_tracker_filename ................ None
+0:   retriever_report_topk_accuracies ................ []
+0:   retriever_score_scaling ......................... False
+0:   retriever_seq_length ............................ 256
+0:   retro_add_retriever ............................. False
+0:   retro_attention_gate ............................ 1
+0:   retro_cyclic_train_iters ........................ None
+0:   retro_encoder_attention_dropout ................. 0.1
+0:   retro_encoder_hidden_dropout .................... 0.1
+0:   retro_encoder_layers ............................ 2
+0:   retro_num_neighbors ............................. 2
+0:   retro_num_retrieved_chunks ...................... 2
+0:   retro_project_dir ............................... None
+0:   retro_verify_neighbor_count ..................... True
+0:   return_log_probs ................................ True
+0:   reuse_grad_buf_for_mxfp8_param_ag ............... False
+0:   rl_calculate_intra_group_similarity ............. False
+0:   rl_importance_sampling_truncation_coef .......... None
+0:   rl_inference_logprobs_is_correction ............. False
+0:   rl_offload_kv_cache_during_training ............. False
+0:   rl_offload_optimizer_during_inference ........... False
+0:   rl_partial_rollouts ............................. False
+0:   rl_prompts_per_eval ............................. 32
+0:   rl_remove_kv_cache_during_training .............. False
+0:   rl_reset_cuda_graphs ............................ False
+0:   rl_sequence_packing_algo ........................ fifo
+0:   rl_sequence_packing_bin_size .................... 8192
+0:   rl_use_sequence_packing ......................... False
+0:   rope_scaling_factor ............................. 8.0
+0:   rope_type ....................................... None
+0:   rotary_base ..................................... 50000
+0:   rotary_interleaved .............................. False
+0:   rotary_percent .................................. 1.0
+0:   rotary_scaling_factor ........................... 1.0
+0:   rotary_seq_len_interpolation_factor ............. 1
+0:   run_workload_inspector_server ................... False
+0:   sample_rate ..................................... 1.0
+0:   save ............................................ None
+0:   save_interval ................................... None
+0:   save_retain_interval ............................ None
+0:   scatter_gather_tensors_in_pipeline .............. True
+0:   seed ............................................ 1234
+0:   seq_length ...................................... 8192
+0:   sequence_parallel ............................... False
+0:   sft ............................................. False
+0:   sft_tokenizer_prompt_format ..................... nemotron-h-aligned
+0:   sgd_momentum .................................... 0.9
+0:   sharp_enabled_group ............................. None
+0:   short_seq_prob .................................. 0.1
+0:   skip_train ...................................... False
+0:   skipped_train_samples ........................... 0
+0:   softmax_type .................................... vanilla
+0:   spec ............................................ None
+0:   split ........................................... None
+0:   squared_relu .................................... False
+0:   start_weight_decay .............................. 0.01
+0:   straggler_ctrlr_port ............................ 65535
+0:   straggler_minmax_count .......................... 1
+0:   strict_fsdp_dtensor_load ........................ True
+0:   suggested_communication_unit_size ............... None
+0:   swiglu .......................................... True
+0:   swin_backbone_type .............................. tiny
+0:   symmetric_ar_type ............................... None
+0:   te_rng_tracker .................................. False
+0:   temperature ..................................... 0.0
+0:   tensor_model_parallel_size ...................... 1
+0:   tensorboard_dir ................................. None
+0:   tensorboard_log_interval ........................ 1
+0:   tensorboard_queue_size .......................... 1000
+0:   test_data_path .................................. None
+0:   test_mode ....................................... False
+0:   tiktoken_num_special_tokens ..................... 1000
+0:   tiktoken_pattern ................................ v2
+0:   tiktoken_special_tokens ......................... None
+0:   timing_log_level ................................ 0
+0:   timing_log_option ............................... minmax
+0:   titles_data_path ................................ None
+0:   tokenizer_metadata .............................. None
+0:   tokenizer_model ................................. moonshotai/Moonlight-16B-A3B-Instruct
+0:   tokenizer_type .................................. HuggingFaceTokenizer
+0:   top_k ........................................... 1
+0:   top_p ........................................... 0.0
+0:   torch_fsdp2_reshard_after_forward ............... True
+0:   tp_comm_bootstrap_backend ....................... nccl
+0:   tp_comm_bulk_dgrad .............................. True
+0:   tp_comm_bulk_wgrad .............................. True
+0:   tp_comm_overlap ................................. False
+0:   tp_comm_overlap_ag .............................. True
+0:   tp_comm_overlap_cfg ............................. None
+0:   tp_comm_overlap_rs .............................. True
+0:   tp_comm_overlap_rs_dgrad ........................ False
+0:   tp_comm_split_ag ................................ True
+0:   tp_comm_split_rs ................................ True
+0:   train_data_path ................................. None
+0:   train_iters ..................................... None
+0:   train_samples ................................... None
+0:   train_sync_interval ............................. None
+0:   transformer_impl ................................ transformer_engine
+0:   transformer_pipeline_model_parallel_size ........ 1
+0:   trust_remote_code ............................... True
+0:   untie_embeddings_and_output_weights ............. True
+0:   use_checkpoint_args ............................. True
+0:   use_checkpoint_opt_param_scheduler .............. False
+0:   use_cpu_initialization .......................... None
+0:   use_dist_ckpt ................................... True
+0:   use_dist_ckpt_deprecated ........................ False
+0:   use_distributed_optimizer ....................... False
+0:   use_flash_attn .................................. False
+0:   use_fused_weighted_squared_relu ................. False
+0:   use_legacy_models ............................... False
+0:   use_megatron_fsdp ............................... False
+0:   use_mp_args_from_checkpoint_args ................ False
+0:   use_one_sent_docs ............................... False
+0:   use_persistent_ckpt_worker ...................... False
+0:   use_precision_aware_optimizer ................... False
+0:   use_pytorch_profiler ............................ False
+0:   use_ring_exchange_p2p ........................... False
+0:   use_rope_scaling ................................ False
+0:   use_rotary_position_embeddings .................. False
+0:   use_sharp ....................................... False
+0:   use_te_activation_func .......................... False
+0:   use_tokenizer_model_from_checkpoint_args ........ False
+0:   use_torch_fsdp2 ................................. False
+0:   use_torch_optimizer_for_cpu_offload ............. False
+0:   use_tp_pp_dp_mapping ............................ False
+0:   v_head_dim ...................................... 128
+0:   valid_data_path ................................. None
+0:   variable_seq_lengths ............................ False
+0:   virtual_pipeline_model_parallel_size ............ None
+0:   vision_backbone_type ............................ vit
+0:   vision_pretraining .............................. False
+0:   vision_pretraining_type ......................... classify
+0:   vocab_extra_ids ................................. 0
+0:   vocab_file ...................................... None
+0:   vocab_size ...................................... None
+0:   wandb_entity .................................... 
+0:   wandb_exp_name .................................. 
+0:   wandb_project ................................... 
+0:   wandb_save_dir .................................. 
+0:   weight_decay .................................... 0.01
+0:   weight_decay_incr_style ......................... constant
+0:   wgrad_deferral_limit ............................ 0
+0:   window_attn_skip_freq ........................... None
+0:   window_size ..................................... None
+0:   world_size ...................................... 8
+0:   yaml_cfg ........................................ None
+0: -------------------- end of arguments ---------------------
+0: > building HuggingFaceTokenizer tokenizer ...
+4: Setting num_layers to 27 from checkpoint
+5: Setting num_layers to 27 from checkpoint
+6: Setting num_layers to 27 from checkpoint
+4: Setting hidden_size to 2048 from checkpoint
+5: Setting hidden_size to 2048 from checkpoint
+5: Setting ffn_hidden_size to 11264 from checkpoint
+6: Setting hidden_size to 2048 from checkpoint
+4: Setting ffn_hidden_size to 11264 from checkpoint
+4: Setting seq_length to 8192 from checkpoint
+4: Setting num_attention_heads to 16 from checkpoint
+5: Setting seq_length to 8192 from checkpoint
+5: Setting num_attention_heads to 16 from checkpoint
+5: Setting num_query_groups to 16 from checkpoint
+6: Setting ffn_hidden_size to 11264 from checkpoint
+6: Setting seq_length to 8192 from checkpoint
+6: Setting num_attention_heads to 16 from checkpoint
+4: Setting num_query_groups to 16 from checkpoint
+4: Setting group_query_attention to False from checkpoint
+5: Setting group_query_attention to False from checkpoint
+5: Setting kv_channels to 128 from checkpoint
+6: Setting num_query_groups to 16 from checkpoint
+6: Setting group_query_attention to False from checkpoint
+4: Setting kv_channels to 128 from checkpoint
+4: Setting max_position_embeddings to 8192 from checkpoint
+5: Setting max_position_embeddings to 8192 from checkpoint
+5: Setting position_embedding_type to rope from checkpoint
+6: Setting kv_channels to 128 from checkpoint
+6: Setting max_position_embeddings to 8192 from checkpoint
+4: Setting position_embedding_type to rope from checkpoint
+4: Setting add_position_embedding to True from checkpoint
+5: Setting add_position_embedding to True from checkpoint
+5: Setting use_rotary_position_embeddings to False from checkpoint
+6: Setting position_embedding_type to rope from checkpoint
+6: Setting add_position_embedding to True from checkpoint
+4: Setting use_rotary_position_embeddings to False from checkpoint
+4: Setting rotary_base to 50000 from checkpoint
+5: Setting rotary_base to 50000 from checkpoint
+6: Setting use_rotary_position_embeddings to False from checkpoint
+4: Setting rotary_percent to 1.0 from checkpoint
+4: Setting rotary_interleaved to False from checkpoint
+5: Setting rotary_percent to 1.0 from checkpoint
+5: Setting rotary_interleaved to False from checkpoint
+6: Setting rotary_base to 50000 from checkpoint
+6: Setting rotary_percent to 1.0 from checkpoint
+4: Setting add_bias_linear to False from checkpoint
+4: Setting add_qkv_bias to False from checkpoint
+5: Setting add_bias_linear to False from checkpoint
+5: Setting add_qkv_bias to False from checkpoint
+6: Setting rotary_interleaved to False from checkpoint
+6: Setting add_bias_linear to False from checkpoint
+4: Setting squared_relu to False from checkpoint
+4: Setting swiglu to True from checkpoint
+5: Setting squared_relu to False from checkpoint
+5: Setting swiglu to True from checkpoint
+5: Setting untie_embeddings_and_output_weights to True from checkpoint
+6: Setting add_qkv_bias to False from checkpoint
+6: Setting squared_relu to False from checkpoint
+4: Setting untie_embeddings_and_output_weights to True from checkpoint
+4: Setting apply_layernorm_1p to False from checkpoint
+4: Setting normalization to RMSNorm from checkpoint
+5: Setting apply_layernorm_1p to False from checkpoint
+5: Setting normalization to RMSNorm from checkpoint
+5: Setting apply_query_key_layer_scaling to False from checkpoint
+6: Setting swiglu to True from checkpoint
+6: Setting untie_embeddings_and_output_weights to True from checkpoint
+6: Setting apply_layernorm_1p to False from checkpoint
+4: Setting apply_query_key_layer_scaling to False from checkpoint
+4: Setting attention_dropout to 0.0 from checkpoint
+5: Setting attention_dropout to 0.0 from checkpoint
+5: Setting hidden_dropout to 0.0 from checkpoint
+4: Setting hidden_dropout to 0.0 from checkpoint
+4: Checkpoint did not provide arguments hybrid_override_pattern
+5: Checkpoint did not provide arguments hybrid_override_pattern
+6: Setting normalization to RMSNorm from checkpoint
+6: Setting apply_query_key_layer_scaling to False from checkpoint
+4: Checkpoint did not provide arguments spec
+4: Setting hybrid_attention_ratio to 0.0 from checkpoint
+5: Checkpoint did not provide arguments spec
+5: Setting hybrid_attention_ratio to 0.0 from checkpoint
+5: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+6: Setting attention_dropout to 0.0 from checkpoint
+6: Setting hidden_dropout to 0.0 from checkpoint
+4: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+4: Setting num_experts to 64 from checkpoint
+5: Setting num_experts to 64 from checkpoint
+5: Setting moe_layer_freq to 1 from checkpoint
+6: Checkpoint did not provide arguments hybrid_override_pattern
+6: Checkpoint did not provide arguments spec
+4: Setting moe_layer_freq to 1 from checkpoint
+4: Setting moe_ffn_hidden_size to 1408 from checkpoint
+5: Setting moe_ffn_hidden_size to 1408 from checkpoint
+5: Setting moe_router_topk to 6 from checkpoint
+6: Setting hybrid_attention_ratio to 0.0 from checkpoint
+6: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+4: Setting moe_router_topk to 6 from checkpoint
+4: Setting moe_router_pre_softmax to True from checkpoint
+5: Setting moe_router_pre_softmax to True from checkpoint
+5: Setting moe_grouped_gemm to True from checkpoint
+5: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+6: Setting num_experts to 64 from checkpoint
+6: Setting moe_layer_freq to 1 from checkpoint
+4: Setting moe_grouped_gemm to True from checkpoint
+4: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+5: Setting mamba_state_dim to 128 from checkpoint
+5: Setting mamba_head_dim to 64 from checkpoint
+6: Setting moe_ffn_hidden_size to 1408 from checkpoint
+6: Setting moe_router_topk to 6 from checkpoint
+4: Setting mamba_state_dim to 128 from checkpoint
+4: Setting mamba_head_dim to 64 from checkpoint
+4: Setting mamba_num_groups to 8 from checkpoint
+5: Setting mamba_num_groups to 8 from checkpoint
+5: Checkpoint did not provide arguments mamba_num_heads
+5: Setting is_hybrid_model to False from checkpoint
+6: Setting moe_router_pre_softmax to True from checkpoint
+6: Setting moe_grouped_gemm to True from checkpoint
+6: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+4: Checkpoint did not provide arguments mamba_num_heads
+4: Setting is_hybrid_model to False from checkpoint
+5: Checkpoint did not provide arguments heterogeneous_layers_config_path
+5: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+6: Setting mamba_state_dim to 128 from checkpoint
+6: Setting mamba_head_dim to 64 from checkpoint
+4: Checkpoint did not provide arguments heterogeneous_layers_config_path
+4: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+4: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+5: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+5: Setting tiktoken_pattern to v2 from checkpoint
+5: Setting padded_vocab_size to 163968 from checkpoint
+6: Setting mamba_num_groups to 8 from checkpoint
+6: Checkpoint did not provide arguments mamba_num_heads
+6: Setting is_hybrid_model to False from checkpoint
+6: Checkpoint did not provide arguments heterogeneous_layers_config_path
+4: Setting tiktoken_pattern to v2 from checkpoint
+4: Setting padded_vocab_size to 163968 from checkpoint
+6: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+6: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+7: Setting num_layers to 27 from checkpoint
+6: Setting tiktoken_pattern to v2 from checkpoint
+6: Setting padded_vocab_size to 163968 from checkpoint
+7: Setting hidden_size to 2048 from checkpoint
+7: Setting ffn_hidden_size to 11264 from checkpoint
+7: Setting seq_length to 8192 from checkpoint
+7: Setting num_attention_heads to 16 from checkpoint
+7: Setting num_query_groups to 16 from checkpoint
+7: Setting group_query_attention to False from checkpoint
+7: Setting kv_channels to 128 from checkpoint
+7: Setting max_position_embeddings to 8192 from checkpoint
+7: Setting position_embedding_type to rope from checkpoint
+7: Setting add_position_embedding to True from checkpoint
+7: Setting use_rotary_position_embeddings to False from checkpoint
+7: Setting rotary_base to 50000 from checkpoint
+7: Setting rotary_percent to 1.0 from checkpoint
+7: Setting rotary_interleaved to False from checkpoint
+7: Setting add_bias_linear to False from checkpoint
+7: Setting add_qkv_bias to False from checkpoint
+7: Setting squared_relu to False from checkpoint
+7: Setting swiglu to True from checkpoint
+7: Setting untie_embeddings_and_output_weights to True from checkpoint
+7: Setting apply_layernorm_1p to False from checkpoint
+7: Setting normalization to RMSNorm from checkpoint
+7: Setting apply_query_key_layer_scaling to False from checkpoint
+7: Setting attention_dropout to 0.0 from checkpoint
+7: Setting hidden_dropout to 0.0 from checkpoint
+7: Checkpoint did not provide arguments hybrid_override_pattern
+7: Checkpoint did not provide arguments spec
+7: Setting hybrid_attention_ratio to 0.0 from checkpoint
+7: Setting hybrid_mlp_ratio to 0.0 from checkpoint
+7: Setting num_experts to 64 from checkpoint
+7: Setting moe_layer_freq to 1 from checkpoint
+7: Setting moe_ffn_hidden_size to 1408 from checkpoint
+7: Setting moe_router_topk to 6 from checkpoint
+7: Setting moe_router_pre_softmax to True from checkpoint
+7: Setting moe_grouped_gemm to True from checkpoint
+7: Setting moe_shared_expert_intermediate_size to 2816 from checkpoint
+7: Setting mamba_state_dim to 128 from checkpoint
+7: Setting mamba_head_dim to 64 from checkpoint
+7: Setting mamba_num_groups to 8 from checkpoint
+7: Checkpoint did not provide arguments mamba_num_heads
+7: Setting is_hybrid_model to False from checkpoint
+7: Checkpoint did not provide arguments heterogeneous_layers_config_path
+7: Checkpoint did not provide arguments heterogeneous_layers_config_encoded_json
+7: Setting tokenizer_type to HuggingFaceTokenizer from checkpoint
+7: Setting tiktoken_pattern to v2 from checkpoint
+7: Setting padded_vocab_size to 163968 from checkpoint
+0: Pytorch distributed before ... 
+0: > initializing torch distributed ...
+1: Pytorch distributed before ... 
+2: Pytorch distributed before ... 
+3: Pytorch distributed before ... 
+6: Pytorch distributed before ... 
+5: Pytorch distributed before ... 
+4: Pytorch distributed before ... 
+7: Pytorch distributed before ... 
+5: [Gloo] Rank 5 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+7: [Gloo] Rank 7 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+6: [Gloo] Rank 6 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+0: [Gloo] Rank 0 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+1: [Gloo] Rank 1 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+2: [Gloo] Rank 2 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+3: [Gloo] Rank 3 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+4: [Gloo] Rank 4 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+5: [Gloo] Rank 5 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+7: [Gloo] Rank 7 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+0: [Gloo] Rank 0 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+1: [Gloo] Rank 1 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+2: [Gloo] Rank 2 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+3: [Gloo] Rank 3 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+4: [Gloo] Rank 4 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+6: [Gloo] Rank 6 is connected to 7 peer ranks. Expected number of connected peer ranks is : 7
+5: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+5: Pytorch distributed after ... 
+1: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+4: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+1: Pytorch distributed after ... 
+2: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+4: Pytorch distributed after ... 
+6: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+2: Pytorch distributed after ... 
+3: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+6: Pytorch distributed after ... 
+7: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+3: Pytorch distributed after ... 
+0: [Gloo] Rank 0 is connected to 0 peer ranks. Expected number of connected peer ranks is : 0
+7: Pytorch distributed after ... 
+0: > initialized tensor model parallel with size 1
+0: > initialized pipeline model parallel with size 1
+0: Pytorch distributed after ... 
+0: > setting random seeds to 1234 ...
+0: > compiling dataset index builder ...
+0: make: Entering directory '/home/xshang/Megatron-LM/megatron/core/datasets'
+0: make: Nothing to be done for 'default'.
+0: make: Leaving directory '/home/xshang/Megatron-LM/megatron/core/datasets'
+0: >>> done with dataset index builder. Compilation time: 0.021 seconds
+0: > compiling and loading fused kernels ...
+0: >>> done with compiling and loading fused kernels. Compilation time: 1.333 seconds
+0: WARNING: Forcing exit_on_missing_checkpoint to True for text generation.
+0: building GPT model ...
+0:  > number of parameters on (tensor, pipeline) model parallel rank (0, 0): 3382556672
+0: sharded_state_dict metadata loaded from the checkpoint: {'singleton_local_shards': True, 'distrib_optim_sharding_type': 'dp_reshardable', 'chained_optim_avoid_prefix': True}
+0: Job sharding has changed: Rerun state will be ignored
+0:  loading distributed checkpoint from /lustre/fsw/general_sa/xshang/modelscope/musecoder/moonlight/ at iteration 174000
+0:  checkpoint version 3.0
+0:   successfully loaded checkpoint from /lustre/fsw/general_sa/xshang/modelscope/musecoder/moonlight/ [ t 1/1, p 1/1 ] at iteration 174000
+3: before torch dist broadcast tensor(1, device='cuda:3')
+2: before torch dist broadcast tensor(1, device='cuda:2')
+1: before torch dist broadcast tensor(1, device='cuda:1')
+4: before torch dist broadcast tensor(1, device='cuda:0')
+6: before torch dist broadcast tensor(1, device='cuda:2')
+7: before torch dist broadcast tensor(1, device='cuda:3')
+5: before torch dist broadcast tensor(1, device='cuda:1')
+0:  * Serving Flask app 'megatron.core.inference.text_generation_server.text_generation_server'
+0:  * Debug mode: off
+2: after torch dist broadcast tensor(0, device='cuda:2')
+1: after torch dist broadcast tensor(0, device='cuda:1')
+3: after torch dist broadcast tensor(0, device='cuda:3')
+4: after torch dist broadcast tensor(0, device='cuda:0')
+0: <class 'transformers_modules.moonshotai.Moonlight-16B-A3B-Instruct.336ed0de8822f5f9205b39132b44eca03e0c8fc4.tokenization_moonshot.TikTokenTokenizer'> TikTokenTokenizer(name_or_path='moonshotai/Moonlight-16B-A3B-Instruct', vocab_size=163842, model_max_length=1048576, is_fast=False, padding_side='right', truncation_side='right', special_tokens={'bos_token': '[BOS]', 'eos_token': '[EOS]', 'unk_token': '[UNK]', 'pad_token': '[PAD]', 'additional_special_tokens': ['<|im_end|>', '<|im_user|>', '<|im_assistant|>', '<|im_system|>', '<|im_middle|>']}, clean_up_tokenization_spaces=False, added_tokens_decoder={
+0: 	163584: AddedToken("[BOS]", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: 	163585: AddedToken("[EOS]", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: 	163586: AddedToken("<|im_end|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+5: after torch dist broadcast tensor(0, device='cuda:1')
+0: 	163587: AddedToken("<|im_user|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: 	163588: AddedToken("<|im_assistant|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: 	163594: AddedToken("<|im_system|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: 	163601: AddedToken("<|im_middle|>", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: 	163838: AddedToken("[PAD]", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: 	163839: AddedToken("[UNK]", rstrip=False, lstrip=False, single_word=False, normalized=False, special=True),
+0: }
+7: after torch dist broadcast tensor(0, device='cuda:3')
+0: )
+6: after torch dist broadcast tensor(0, device='cuda:2')
+0: batch_prompt_tokens_list : [[4396, 39556, 387, 261, 3707]]
+0: prep_inference_input prompts_tokens : tensor([[  4396,  39556,    387,    261,   3707, 163585, 163585, 163585, 163585,
+0:          163585, 163585, 163585, 163585, 163585, 163585]], device='cuda:0')
+2: all_prompts_done : tensor(False, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+1: all_prompts_done : tensor(False, device='cuda:1')
+3: max_sequence_length : tensor(15, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+1: max_sequence_length : tensor(15, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+0: max_sequence_length : tensor(15, device='cuda:0')
+4: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+7: all_prompts_done : tensor(False, device='cuda:3')
+6: all_prompts_done : tensor(False, device='cuda:2')
+4: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+4: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+1: all_prompts_done : tensor(False, device='cuda:1')
+6: all_prompts_done : tensor(False, device='cuda:2')
+7: all_prompts_done : tensor(False, device='cuda:3')
+3: max_sequence_length : tensor(15, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+4: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+0: max_sequence_length : tensor(15, device='cuda:0')
+1: max_sequence_length : tensor(15, device='cuda:1')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+1: all_prompts_done : tensor(False, device='cuda:1')
+4: all_prompts_done : tensor(False, device='cuda:0')
+0: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+3: max_sequence_length : tensor(15, device='cuda:3')
+7: all_prompts_done : tensor(False, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+6: all_prompts_done : tensor(False, device='cuda:2')
+4: max_sequence_length : tensor(15, device='cuda:0')
+1: max_sequence_length : tensor(15, device='cuda:1')
+0: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+4: all_prompts_done : tensor(False, device='cuda:0')
+0: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+1: all_prompts_done : tensor(False, device='cuda:1')
+3: max_sequence_length : tensor(15, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+7: all_prompts_done : tensor(False, device='cuda:3')
+6: all_prompts_done : tensor(False, device='cuda:2')
+1: max_sequence_length : tensor(15, device='cuda:1')
+0: max_sequence_length : tensor(15, device='cuda:0')
+4: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+4: all_prompts_done : tensor(False, device='cuda:0')
+1: all_prompts_done : tensor(False, device='cuda:1')
+5: all_prompts_done : tensor(False, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+3: max_sequence_length : tensor(15, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+7: all_prompts_done : tensor(False, device='cuda:3')
+1: max_sequence_length : tensor(15, device='cuda:1')
+0: max_sequence_length : tensor(15, device='cuda:0')
+6: all_prompts_done : tensor(False, device='cuda:2')
+5: max_sequence_length : tensor(15, device='cuda:1')
+4: max_sequence_length : tensor(15, device='cuda:0')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+2: all_prompts_done : tensor(False, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+1: all_prompts_done : tensor(False, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+4: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+2: max_sequence_length : tensor(15, device='cuda:2')
+3: max_sequence_length : tensor(15, device='cuda:3')
+7: all_prompts_done : tensor(False, device='cuda:3')
+1: max_sequence_length : tensor(15, device='cuda:1')
+6: all_prompts_done : tensor(False, device='cuda:2')
+4: max_sequence_length : tensor(15, device='cuda:0')
+0: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+4: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+1: all_prompts_done : tensor(False, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+7: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+3: max_sequence_length : tensor(15, device='cuda:3')
+6: all_prompts_done : tensor(False, device='cuda:2')
+4: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+1: max_sequence_length : tensor(15, device='cuda:1')
+0: max_sequence_length : tensor(15, device='cuda:0')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+2: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+1: all_prompts_done : tensor(False, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+4: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+3: max_sequence_length : tensor(15, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+7: all_prompts_done : tensor(False, device='cuda:3')
+1: max_sequence_length : tensor(15, device='cuda:1')
+6: all_prompts_done : tensor(False, device='cuda:2')
+0: max_sequence_length : tensor(15, device='cuda:0')
+4: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+4: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+1: all_prompts_done : tensor(False, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+7: all_prompts_done : tensor(False, device='cuda:3')
+5: max_sequence_length : tensor(15, device='cuda:1')
+6: all_prompts_done : tensor(False, device='cuda:2')
+3: max_sequence_length : tensor(15, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+4: max_sequence_length : tensor(15, device='cuda:0')
+0: max_sequence_length : tensor(15, device='cuda:0')
+1: max_sequence_length : tensor(15, device='cuda:1')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: all_prompts_done : tensor(False, device='cuda:3')
+2: all_prompts_done : tensor(False, device='cuda:2')
+1: all_prompts_done : tensor(False, device='cuda:1')
+4: all_prompts_done : tensor(False, device='cuda:0')
+5: all_prompts_done : tensor(False, device='cuda:1')
+0: all_prompts_done : tensor(False, device='cuda:0')
+7: all_prompts_done : tensor(False, device='cuda:3')
+3: max_sequence_length : tensor(15, device='cuda:3')
+2: max_sequence_length : tensor(15, device='cuda:2')
+6: all_prompts_done : tensor(False, device='cuda:2')
+4: max_sequence_length : tensor(15, device='cuda:0')
+5: max_sequence_length : tensor(15, device='cuda:1')
+1: max_sequence_length : tensor(15, device='cuda:1')
+0: max_sequence_length : tensor(15, device='cuda:0')
+7: max_sequence_length : tensor(15, device='cuda:3')
+6: max_sequence_length : tensor(15, device='cuda:2')
+3: sampling_params.num_tokens_to_generate : 10
+2: sampling_params.num_tokens_to_generate : 10
+5: sampling_params.num_tokens_to_generate : 10
+4: sampling_params.num_tokens_to_generate : 10
+0: sampling_params.num_tokens_to_generate : 10
+1: sampling_params.num_tokens_to_generate : 10
+7: sampling_params.num_tokens_to_generate : 10
+6: sampling_params.num_tokens_to_generate : 10
+3: before torch dist broadcast tensor(1, device='cuda:3')
+2: before torch dist broadcast tensor(1, device='cuda:2')
+0: tokenizer offset ids : [4396, 39556, 387, 261, 3707, 4108, 11458, 68279, 715, 16, 31068, 73, 4442, 521, 220]
+0: Beijing is a big q).
+0: 
+5: before torch dist broadcast tensor(1, device='cuda:1')
+0:  Processor +1oncej times r 
+1: before torch dist broadcast tensor(1, device='cuda:1')
+4: before torch dist broadcast tensor(1, device='cuda:0')
+7: before torch dist broadcast tensor(1, device='cuda:3')
+6: before torch dist broadcast tensor(1, device='cuda:2')
