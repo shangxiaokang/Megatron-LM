@@ -17,7 +17,6 @@ from .gpt2_tokenization import GPT2Tokenizer
 from megatron.training.tokenizer.multimodal_tokenizer import MultimodalTokenizer
 from megatron.training.tokenizer.sft_tokenizer import SFTTokenizer
 
-
 def build_tokenizer(args, **kwargs):
     """Initialize tokenizer."""
     if args.rank == 0:
@@ -167,6 +166,34 @@ class _HuggingFaceTokenizer(MegatronLegacyTokenizer):
         return self._tokenizer.decode(token_ids, **kwargs)
 
     def offsets(self, ids: list[int], text: str) -> list[int]:
+        offsets = []
+        if getattr(self._tokenizer, "is_fast", False):
+            # Fast tokenizer: use token_to_chars
+            retok_ids: "transformers.BatchEncoding" = self._tokenizer(text)
+            next_start_idx = 0
+            for i in range(len(ids)):
+                span = retok_ids.token_to_chars(i)
+                if span is not None:
+                    offsets.append(span.start)
+                    next_start_idx = span.end
+                else:
+                    offsets.append(next_start_idx)
+
+        else:
+            # Slow tokenizer
+
+            current_pos = 0
+            for token_id in ids:
+                token_str = self._tokenizer.convert_ids_to_tokens(token_id)
+                idx = text.find(token_str, current_pos)
+
+                if idx == -1:
+                    offsets.append(current_pos)
+                else:
+                    offsets.append(idx)
+                    current_pos = idx + len(token_str)
+        return offsets
+        '''
         retok_ids: "transformers.BatchEncoding" = self._tokenizer(text)
         offsets, next_start_idx = [], 0
         for i in range(len(ids)):
@@ -177,6 +204,22 @@ class _HuggingFaceTokenizer(MegatronLegacyTokenizer):
             else:
                 offsets.append(next_start_idx)
         return offsets
+        offsets = []
+
+        current_pos = 0
+        for token_id in ids:
+            token_str = self._tokenizer.convert_ids_to_tokens(token_id)
+            idx = text.find(token_str, current_pos)
+
+            if idx == -1:
+                offsets.append(current_pos)
+            else:
+                offsets.append(idx)
+                current_pos = idx + len(token_str)
+
+        return offsets
+        '''
+
 
     @property
     def eod(self):

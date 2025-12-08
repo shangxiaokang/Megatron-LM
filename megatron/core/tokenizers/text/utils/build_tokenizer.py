@@ -38,6 +38,7 @@ def build_tokenizer(args):
         tokenizer_path = args.tokenizer_model
         kwargs['vocab_file'] = args.vocab_file
         kwargs['merges_file'] = args.merge_file
+        kwargs['trust_remote_code'] = args.trust_remote_code
     elif args.tokenizer_type == 'NullTokenizer':
         tokenizer_library = 'null'
         metadata = {'library': tokenizer_library}
