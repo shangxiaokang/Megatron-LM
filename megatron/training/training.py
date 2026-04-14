@@ -259,6 +259,113 @@ stimer = StragglerDetector()
 
 from megatron.core.msc_utils import MultiStorageClientFeature, open_file
 
+_NVDFW_INSPECT_INITIALIZED = False
+_NVDFW_LAST_STEP_ITER = None
+
+
+def _is_env_flag_enabled(name: str, default: str = "0") -> bool:
+    """Interpret common boolean env flag values."""
+    return os.getenv(name, default).strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _initialize_nvdlfw_inspect_if_enabled() -> None:
+    """Initialize nvdlfw_inspect once when enabled."""
+    global _NVDFW_INSPECT_INITIALIZED
+
+    if _NVDFW_INSPECT_INITIALIZED:
+        return
+
+    # If the entry script already initialized NVDFW, reuse that state.
+    main_module = sys.modules.get("__main__")
+    if main_module is not None and bool(getattr(main_module, "_nvdlfw_enabled", False)):
+        _NVDFW_INSPECT_INITIALIZED = True
+        return
+
+    if not _is_env_flag_enabled("ENABLE_NVDFW_INSPECT"):
+        return
+
+    try:
+        import nvdlfw_inspect.api as debug_api
+    except ImportError as exc:
+        print_rank_0(f"[NVDFW] nvdlfw_inspect is not available: {exc}")
+        return
+
+    feature_dir = os.getenv("NVDFW_FEATURE_DIR", "").strip()
+    if not feature_dir:
+        try:
+            import transformer_engine as te_pkg
+
+            feature_dir = os.path.join(os.path.dirname(te_pkg.__file__), "debug", "features")
+            os.environ["NVDFW_FEATURE_DIR"] = feature_dir
+        except Exception as exc:  # pylint: disable=broad-except
+            print_rank_0(f"[NVDFW] Failed to resolve TE debug feature dir: {exc}")
+            return
+
+    config_file = os.getenv("NVDFW_CONFIG_FILE", "").strip() or None
+    log_dir = os.getenv("NVDFW_LOG_DIR", "").strip() or "."
+    default_logging_enabled = _is_env_flag_enabled("NVDFW_DEFAULT_LOGGING_ENABLED", "1")
+
+    try:
+        debug_api.initialize(
+            config_file=config_file,
+            feature_dirs=[feature_dir],
+            log_dir=log_dir,
+            default_logging_enabled=default_logging_enabled,
+        )
+        _NVDFW_INSPECT_INITIALIZED = True
+        print_rank_0(
+            "[NVDFW] Initialized via training.py. "
+            f"config={config_file}, feature_dir={feature_dir}, log_dir={log_dir}"
+        )
+    except Exception as exc:  # pylint: disable=broad-except
+        print_rank_0(f"[NVDFW] Initialization failed: {exc}")
+
+
+def _assign_nvdlfw_layer_names_if_enabled(model) -> None:
+    """Assign stable readable layer names for NVDFW matching/logging."""
+    if not _NVDFW_INSPECT_INITIALIZED:
+        return
+
+    try:
+        import nvdlfw_inspect.api as debug_api
+
+        for model_chunk in model:
+            module = getattr(model_chunk, "module", model_chunk)
+            debug_api.infer_and_assign_layer_names(module)
+    except Exception as exc:  # pylint: disable=broad-except
+        print_rank_0(f"[NVDFW] Failed to infer and assign layer names: {exc}")
+
+
+def _nvdlfw_inspect_step_if_enabled(iteration: Optional[int] = None) -> None:
+    """Flush NVDFW feature outputs once per training iteration."""
+    global _NVDFW_LAST_STEP_ITER
+
+    if not _NVDFW_INSPECT_INITIALIZED:
+        return
+
+    # If entry script already stepped this iteration, do not step twice.
+    main_module = sys.modules.get("__main__")
+    if (
+        iteration is not None
+        and main_module is not None
+        and getattr(main_module, "_last_nvdlfw_step_iter", None) == iteration
+    ):
+        _NVDFW_LAST_STEP_ITER = iteration
+        return
+
+    if iteration is not None and iteration == _NVDFW_LAST_STEP_ITER:
+        return
+
+    try:
+        import nvdlfw_inspect.api as debug_api
+
+        debug_api.step()
+        _NVDFW_LAST_STEP_ITER = iteration
+        if iteration is not None and main_module is not None:
+            setattr(main_module, "_last_nvdlfw_step_iter", iteration)
+    except Exception as exc:  # pylint: disable=broad-except
+        print_rank_0(f"[NVDFW] step() failed: {exc}")
+
 
 def destroy_global_state():
     destroy_global_vars()
@@ -1025,11 +1132,14 @@ def pretrain(
     else:
         checkpointing_context = {}
 
+    _initialize_nvdlfw_inspect_if_enabled()
+
     # Model, optimizer, and learning rate.
     timers('model-and-optimizer-setup', log_level=0).start(barrier=True)
     model, optimizer, opt_param_scheduler = setup_model_and_optimizer(
         model_provider, model_type, checkpointing_context=checkpointing_context
     )
+    _assign_nvdlfw_layer_names_if_enabled(model)
 
     timers('model-and-optimizer-setup').stop()
     print_datetime('after model, optimizer, and learning rate ' 'scheduler are built')
@@ -3023,6 +3133,7 @@ def train(
                 forward_step_func, train_data_iterator, model, optimizer, opt_param_scheduler, config, forward_backward_func, iteration=iteration
             )
             ft_integration.on_training_step_end()
+            _nvdlfw_inspect_step_if_enabled(iteration)
         if should_checkpoint:
             save_checkpoint_and_time(
                 iteration,
