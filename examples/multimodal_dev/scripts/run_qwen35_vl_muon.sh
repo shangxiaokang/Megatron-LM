@@ -18,8 +18,10 @@ set -euo pipefail
 
 export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NCCL_IB_SL=1
+export NCCL_GRAPH_REGISTER=0
 export NVTE_FUSED_ATTN=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=4
 
 DRY_RUN=${DRY_RUN:-0}
 GPUS_PER_NODE=${GPUS_PER_NODE:-4}
@@ -34,13 +36,13 @@ PROFILE_STEP_END=${PROFILE_STEP_END:-5}
 PROFILE_RANKS=${PROFILE_RANKS:-0}
 LAUNCHER=${LAUNCHER:-torchrun}
 
-MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b}
+MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b_light}
 VISION_NUM_LAYERS=${VISION_NUM_LAYERS:-}
-PR=${PR:-bf16}
+PR=${PR:-mxfp8}
 
 # Batch sizes
-MBS=${MBS:-2}
-GBS=${GBS:-128}
+MBS=${MBS:-1}
+GBS=${GBS:-512}
 
 # Parallelism
 TP=${TP:-1}
@@ -186,6 +188,9 @@ TRAINING_ARGS=(
     --manual-gc-interval 5
     --mtp-num-layers 1
     --mtp-loss-scaling-factor 0.1
+    --cuda-graph-impl transformer_engine
+    --cuda-graph-scope attn moe_router
+
 )
 
 PR_ARGS=()
@@ -193,18 +198,18 @@ if [[ ${PR} == "mxfp8" ]]; then
   PR_ARGS=(
     --fp8-recipe mxfp8
     --fp8-format e4m3
-    --fp8-param-gather
-    --reuse-grad-buf-for-mxfp8-param-ag
     --overlap-grad-reduce
-    --overlap-param-gather
-    --use-precision-aware-optimizer
-    --main-grads-dtype fp32
-    --main-params-dtype fp32
-    --exp-avg-dtype bf16
-    --exp-avg-sq-dtype bf16
     --moe-router-padding-for-quantization
   )
 fi
+    #--fp8-param-gather
+    #--reuse-grad-buf-for-mxfp8-param-ag
+    #--overlap-param-gather
+    #--use-precision-aware-optimizer
+    #--main-grads-dtype fp32
+    #--main-params-dtype fp32
+    #--exp-avg-dtype bf16
+    #--exp-avg-sq-dtype bf16
 
 PROFILE_ARGS=()
 NSYS_CMD=()

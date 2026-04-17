@@ -20,13 +20,19 @@ export CUDA_DEVICE_MAX_CONNECTIONS=1
 export NCCL_IB_SL=1
 export NVTE_FUSED_ATTN=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
+export NCCL_GRAPH_REGISTER=0
+export NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=4
 
-DRY_RUN=${DRY_RUN:-1}
-GPUS_PER_NODE=${GPUS_PER_NODE:-8}
+DRY_RUN=${DRY_RUN:-0}
+GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 if [ -n "${SLURM_JOB_NUM_NODES:-}" ]; then
     NUM_NODES="$SLURM_JOB_NUM_NODES"
 else
     NUM_NODES=${NNODES:-1}
+fi
+MXFP8=${MXFP8:-2D}
+if [[ ${MXFP8} == "2D" ]]; then
+  export NVTE_MXFP8_ENABLE_2D_QUANTIZATION=1
 fi
 PROFILE=${PROFILE:-0}
 PROFILE_STEP_START=${PROFILE_STEP_START:-4}
@@ -34,16 +40,17 @@ PROFILE_STEP_END=${PROFILE_STEP_END:-5}
 PROFILE_RANKS=${PROFILE_RANKS:-0}
 LAUNCHER=${LAUNCHER:-torchrun}
 
-MODEL_VARIANT=${MODEL_VARIANT:-proxy}
+MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b}
 VISION_NUM_LAYERS=${VISION_NUM_LAYERS:-}
+PR=${PR:-mxfp8}
 
 # Batch sizes
-MBS=${MBS:-1}
-GBS=${GBS:-64}
+MBS=${MBS:-2}
+GBS=${GBS:-128}
 
 # Parallelism
 TP=${TP:-1}
-EP=${EP:-2}
+EP=${EP:-4}
 PP=${PP:-1}
 
 # Variant-aware architecture defaults.
@@ -115,7 +122,7 @@ esac
 SEQ_LEN=${SEQ_LEN:-4096}
 
 WANDB_PROJECT='multimodal-v2-qwen35-vl'
-EXP_NAME="qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}"
+EXP_NAME="qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}_${MXFP8}_${PR}_MBS${MBS}_GBS${GBS}_ADAM"
 
 RECOMPUTE_VISION=${RECOMPUTE_VISION:-0}
 if [ "$RECOMPUTE_VISION" -eq 1 ]; then
@@ -127,11 +134,12 @@ if [ "$RECOMPUTE" -eq 1 ]; then
 fi
 
 MEGATRON_LM_PATH="${MEGATRON_LM_PATH:-$(cd "$(dirname "$0")/../../.." && pwd)}"
+ROOT_DIR='/lustre/fsw/general_sa/xshang/Qwen3.5'
 ROOT_DIR="${ROOT_DIR:-${MEGATRON_LM_PATH}/local/}"
-CHECKPOINT_STORE_PATH="${ROOT_DIR}${EXP_NAME}"
+CHECKPOINT_STORE_PATH="${ROOT_DIR}/${EXP_NAME}"
 mkdir -p "$CHECKPOINT_STORE_PATH"
 
-TENSORBOARD_LOGS_PATH="${TENSORBOARD_LOGS_PATH:-${MEGATRON_LM_PATH}/logs}"
+TENSORBOARD_LOGS_PATH="${TENSORBOARD_LOGS_PATH:-${ROOT_DIR}/logs}"
 mkdir -p "$TENSORBOARD_LOGS_PATH"
 
 DISTRIBUTED_ARGS=(
@@ -182,7 +190,27 @@ TRAINING_ARGS=(
     --manual-gc-interval 5
     --mtp-num-layers 1
     --mtp-loss-scaling-factor 0.1
+    --cuda-graph-impl transformer_engine
+    --cuda-graph-scope attn moe_router moe_preprocess
 )
+
+PR_ARGS=()
+if [[ ${PR} == "mxfp8" ]]; then
+PR_ARGS=(
+    --fp8-recipe mxfp8
+    --fp8-format e4m3
+    --fp8-param-gather
+    --reuse-grad-buf-for-mxfp8-param-ag
+    --overlap-grad-reduce
+    --overlap-param-gather
+    --use-precision-aware-optimizer
+    --main-grads-dtype fp32
+    --main-params-dtype fp32
+    --exp-avg-dtype bf16
+    --exp-avg-sq-dtype bf16
+    --moe-router-padding-for-quantization
+)
+fi
 
 PROFILE_ARGS=()
 NSYS_CMD=()
@@ -224,7 +252,8 @@ EVAL_AND_LOGGING_ARGS=(
 
 # --- Tokenizer ---
 TOKENIZER_ARGS=(
-    --tokenizer-type NullTokenizer
+    --tokenizer-type HuggingFaceTokenizer
+    --tokenizer-model Qwen/Qwen3.5-35B-A3B
     --vocab-size 248320
 )
 
@@ -232,7 +261,7 @@ TOKENIZER_ARGS=(
 MULTIMODAL_ARGS=(
     --model-arch qwen35_vl
     --model-variant "$MODEL_VARIANT"
-    --dataset-provider mock
+    --data-path /lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document
     --image-token-id 248056
     --image-size 224
     --total-seq-length "$SEQ_LEN"
@@ -274,8 +303,8 @@ GPT_MODEL_ARGS=(
     --linear-num-key-heads 16
     --linear-num-value-heads "$LINEAR_NUM_VALUE_HEADS"
     --make-vocab-size-divisible-by 485
-    --moe-router-force-load-balancing
 )
+    # --moe-router-force-load-balancing
 
 # --- MoE args (MoE variants only) ---
 MOE_ARGS=()
@@ -302,7 +331,7 @@ if [ "$MODEL_VARIANT" != "9b" ]; then
         --moe-router-topk "$MOE_TOPK"
         --moe-grouped-gemm
         --moe-aux-loss-coeff 1e-3
-        --moe-token-dispatcher-type alltoall
+        --moe-token-dispatcher-type flex --moe-flex-dispatcher-backend hybridep --moe-hybridep-num-sms 32
         --moe-router-dtype fp32
     )
 fi
@@ -328,7 +357,7 @@ if [ "$RECOMPUTE_VISION" -eq 1 ]; then
 fi
 
 # --- FSDP ---
-USE_FSDP=${USE_FSDP:-1}
+USE_FSDP=${USE_FSDP:-0}
 if [ "$USE_FSDP" -eq 1 ]; then
     FSDP_ARGS=(
         --use-megatron-fsdp
@@ -368,8 +397,11 @@ else
     exit 1
 fi
 
+LOG_FILE="Qwen3.5_`date "+%Y%m%d%H%M"`.log"
+
 cmd=( "${NSYS_CMD[@]}" "${LAUNCH_CMD[@]}" \
     "${TRAINING_ARGS[@]}" \
+    "${PR_ARGS[@]}" \
     "${PROFILE_ARGS[@]}" \
     "${MODEL_PARALLEL_ARGS[@]}" \
     "${EVAL_AND_LOGGING_ARGS[@]}" \
@@ -386,5 +418,5 @@ if [ "$DRY_RUN" -eq 1 ]; then
     echo "=== DRY RUN ==="
     exit 0
 else
-    "${cmd[@]}"
+    "${cmd[@]}" 2>&1 | tee logs/${LOG_FILE}
 fi
