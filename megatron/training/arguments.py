@@ -1513,8 +1513,6 @@ def validate_args(args, defaults={}):
         assert not args.use_torch_fsdp2, "Muon optimizer does not support Torch-FSDP2 for now."
         assert not args.use_megatron_fsdp, "Muon optimizer does not support Megatron-FSDP for now."
         assert args.ckpt_format in ["torch", "torch_dist"], "Muon optimizer supports torch and torch_dist checkpoint format."
-        assert args.experimental_attention_variant is None, "Muon optimizer does not support attention variant for now."
-        assert not args.attention_output_gate, "Muon optimizer does not support attention output gate for now."
 
     # Optimizer CPU offload check
     if args.optimizer_cpu_offload:

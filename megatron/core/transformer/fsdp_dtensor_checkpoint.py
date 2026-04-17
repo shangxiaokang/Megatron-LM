@@ -250,13 +250,16 @@ def handle_swiglu_in_state_dict(model, model_state_dict, optimizer_state_dict):
         tp_mesh = megatron_fsdp_dist_index.get_submesh(
             [megatron_fsdp_dist_index.tp_dim], is_expert_parallel=is_expert_param
         )
-        data_size = data.numel() // tp_mesh.mesh.numel()
+        # data_size = data.numel() // tp_mesh.mesh.numel()
+        is_dtensor = isinstance(data, DTensor)
+        data_size = data.numel() // tp_mesh.mesh.numel() if is_dtensor else data.numel()
         w_slice = slice(0, data_size // 2)
         v_slice = slice(data_size // 2, data_size)
 
         view_shape = list(data.shape)
         view_shape[swiglu_shard_axis] = -1
-        local_tensor = data.to_local()
+        # local_tensor = data.to_local()
+        local_tensor = data.to_local() if is_dtensor else data
         weight_w = local_tensor.view(-1)[
             offset_slice(intersection(fsdp_slice, w_slice), -fsdp_slice.start)
         ]
