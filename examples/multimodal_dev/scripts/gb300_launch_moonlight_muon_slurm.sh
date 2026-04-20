@@ -5,23 +5,23 @@ set -euxo pipefail
 # Moonlight-16B Muon GB300/GB200 Slurm Launch Script
 #
 # - Reference style: megatron-moe-scripts/examples/qwen3/gb300_launch_235b_slurm.sh
-# - Launch mode: Slurm + mpirun + python (NO torchrun)
+# - Launch mode: Slurm + srun(pmix) + python (NO torchrun)
 ################################################################################
 
 #===============================================================================
 # Cluster & Container Configuration
 #===============================================================================
 export ACCOUNT=${ACCOUNT:-general_sa}
-export PARTITION=${PARTITION:-gb200-backfill}
+export PARTITION=${PARTITION:-gb300-backfill}
 export CLUSTER=${CLUSTER:-lyris}
-export CONTAINER_IMAGE=${CONTAINER_IMAGE:-/lustre/fsw/general_sa/xshang/sqsh/Pytorch-2512-GB300-HybridEP-V2.sqsh}
-export CONTAINER_MOUNTS=${CONTAINER_MOUNTS:-/home/xshang:/home/xshang,/lustre/fsw/general_sa/:/lustre/fsw/general_sa/,/lustre/raplab/client/:/lustre/raplab/client/}
+export CONTAINER_IMAGE=${CONTAINER_IMAGE:-/lustre/fsw/general_sa/xshang/sqsh/Pytorch-2512-GB300-HybridEP-Qwen3.5-TE2D.sqsh}
+export CONTAINER_MOUNTS=${CONTAINER_MOUNTS:-/home/xshang:/home/xshang,/lustre/fsw/general_sa/:/lustre/fsw/general_sa/}
 
 #===============================================================================
 # Paths
 #===============================================================================
 export CODE_DIR=${CODE_DIR:-/home/xshang/Megatron-LM}
-export WORKDIR=${WORKDIR:-/lustre/raplab/client/xshang/workspace/Megatron-LM/examples/multimodal_dev/scripts}
+export WORKDIR=${WORKDIR:-/home/xshang/Megatron-LM/examples/multimodal_dev/scripts}
 export TRAINING_SCRIPT_PATH=${TRAINING_SCRIPT_PATH:-${CODE_DIR}/pretrain_gpt.py}
 export OUT_DIR=${OUT_DIR:-${WORKDIR}/output}
 export LOG_DIR=${LOG_DIR:-${OUT_DIR}/slurm_logs}
@@ -32,8 +32,8 @@ mkdir -p "${LOG_DIR}" "${OUT_DIR}"
 #===============================================================================
 export NNODES=${NNODES:-1}
 export SEGMENT=${SEGMENT:-${NNODES}}
-export N_TASKS_PER_NODE=${N_TASKS_PER_NODE:-1}   # only one launcher task
 export GPUS_PER_NODE=${GPUS_PER_NODE:-4}
+export N_TASKS_PER_NODE=${N_TASKS_PER_NODE:-${GPUS_PER_NODE}}
 export RUN_TIME=${RUN_TIME:-08:00:00}
 export MASTER_PORT=${MASTER_PORT:-6000}
 export JOB_NAME=${JOB_NAME:-Moonlight-16B-Muon}
@@ -46,6 +46,7 @@ export NCCL_IB_SL=1
 export NVTE_FUSED_ATTN=1
 export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export CUDA_DEVICE_MAX_CONNECTIONS=${CUDA_DEVICE_MAX_CONNECTIONS:-1}
+export NCCL_GRAPH_REGISTER=0
 
 #===============================================================================
 # Training Parameters (from run_moonlight_muon.sh)
@@ -215,29 +216,31 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
 #SBATCH --partition=${PARTITION}
 #SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
 #SBATCH --time=${RUN_TIME}
-#SBATCH --job-name=${ACCOUNT}-${JOB_NAME}-${TIMESTAMP}
+#SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
 #SBATCH --output=${SLURM_LOGS}/slurm-%j.log
 #SBATCH --exclusive
 
 set -euo pipefail
 
 export MASTER_ADDR=\$(scontrol show hostnames "\${SLURM_JOB_NODELIST}" | head -n 1)
-export WORLD_SIZE=\$((\${SLURM_NNODES} * ${GPUS_PER_NODE}))
+export WORLD_SIZE=\${SLURM_NTASKS}
 echo "MASTER_ADDR=\${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}, WORLD_SIZE=\${WORLD_SIZE}"
 
 srun \\
     --mpi=pmix -l \\
-    --ntasks=1 \\
     --kill-on-bad-exit=1 \\
     --no-container-mount-home \\
     --container-image=${CONTAINER_IMAGE} \\
     --container-mounts=${CONTAINER_MOUNTS} \\
     --container-workdir=${WORKDIR} \\
     bash -lc "set -euo pipefail; \\
-        pip install flask flask-restful uvloop; \\
-        mpirun --allow-run-as-root --bind-to none --map-by ppr:${GPUS_PER_NODE}:node -np \\\${WORLD_SIZE} \\
-            -x MASTER_ADDR -x MASTER_PORT -x WORLD_SIZE -x NCCL_IB_SL -x NVTE_FUSED_ATTN -x PYTORCH_CUDA_ALLOC_CONF -x CUDA_DEVICE_MAX_CONNECTIONS \\
-            bash -lc 'set -euo pipefail; export RANK=\\\${OMPI_COMM_WORLD_RANK}; export LOCAL_RANK=\\\${OMPI_COMM_WORLD_LOCAL_RANK}; export WORLD_SIZE=\\\${OMPI_COMM_WORLD_SIZE}; export CUDA_VISIBLE_DEVICES=\\\${LOCAL_RANK}; ${TRAINING_CMD}'" \\
+        export RANK=\\\${SLURM_PROCID}; \\
+        export LOCAL_RANK=\\\${SLURM_LOCALID}; \\
+        export WORLD_SIZE=\\\${SLURM_NTASKS}; \\
+        export CUDA_VISIBLE_DEVICES=\\\${SLURM_LOCALID}; \\
+        export MASTER_ADDR=\\\${MASTER_ADDR}; \\
+        export MASTER_PORT=${MASTER_PORT}; \\
+        ${TRAINING_CMD}" \\
         2>&1 | tee ${SLURM_LOGS}/\\\${SLURM_JOB_ID}.log
 EOF
     echo "============================================================"
@@ -247,7 +250,7 @@ EOF
     echo "PARTITION:        ${PARTITION}"
     echo "NODES:            ${NNODES}"
     echo "GPUS_PER_NODE:    ${GPUS_PER_NODE}"
-    echo "WORLD_SIZE:       $((NNODES * GPUS_PER_NODE))"
+    echo "WORLD_SIZE:       $((NNODES * N_TASKS_PER_NODE))"
     echo "RUN_TIME:         ${RUN_TIME}"
     echo "PRECISION(PR):    ${PR}"
     echo "CHECKPOINT:       ${CHECKPOINT}"
@@ -265,29 +268,25 @@ else
 #SBATCH --partition=${PARTITION}
 #SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
 #SBATCH --time=${RUN_TIME}
-#SBATCH --job-name=${ACCOUNT}-${JOB_NAME}-${TIMESTAMP}
+#SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
 #SBATCH --output=${SLURM_LOGS}/slurm-%j.log
 #SBATCH --exclusive
 
 set -euo pipefail
 
 export MASTER_ADDR=\$(scontrol show hostnames "\${SLURM_JOB_NODELIST}" | head -n 1)
-export WORLD_SIZE=\$((\${SLURM_NNODES} * ${GPUS_PER_NODE}))
+export WORLD_SIZE=\${SLURM_NTASKS}
 echo "MASTER_ADDR=\${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}, WORLD_SIZE=\${WORLD_SIZE}"
 
 srun \\
     --mpi=pmix -l \\
-    --ntasks=1 \\
     --kill-on-bad-exit=1 \\
     --no-container-mount-home \\
     --container-image=${CONTAINER_IMAGE} \\
     --container-mounts=${CONTAINER_MOUNTS} \\
     --container-workdir=${WORKDIR} \\
     bash -lc "set -euo pipefail; \\
-        pip install flask flask-restful uvloop; \\
-        mpirun --allow-run-as-root --bind-to none --map-by ppr:${GPUS_PER_NODE}:node -np \\\${WORLD_SIZE} \\
-            -x MASTER_ADDR -x MASTER_PORT -x WORLD_SIZE -x NCCL_IB_SL -x NVTE_FUSED_ATTN -x PYTORCH_CUDA_ALLOC_CONF -x CUDA_DEVICE_MAX_CONNECTIONS \\
-            bash -lc 'set -euo pipefail; export RANK=\\\${OMPI_COMM_WORLD_RANK}; export LOCAL_RANK=\\\${OMPI_COMM_WORLD_LOCAL_RANK}; export WORLD_SIZE=\\\${OMPI_COMM_WORLD_SIZE}; export CUDA_VISIBLE_DEVICES=\\\${LOCAL_RANK}; ${TRAINING_CMD}'" \\
+        ${TRAINING_CMD}" \\
         2>&1 | tee ${SLURM_LOGS}/\\\${SLURM_JOB_ID}.log
 EOF
     echo "Job submitted successfully!"
