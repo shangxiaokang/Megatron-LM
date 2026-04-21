@@ -30,7 +30,7 @@ mkdir -p "${LOG_DIR}" "${OUT_DIR}"
 #===============================================================================
 # Runtime Configuration (overridable via env)
 #===============================================================================
-export NNODES=${NNODES:-1}
+export NNODES=${NNODES:-2}
 export SEGMENT=${SEGMENT:-${NNODES}}
 export GPUS_PER_NODE=${GPUS_PER_NODE:-4}
 export N_TASKS_PER_NODE=${N_TASKS_PER_NODE:-${GPUS_PER_NODE}}
@@ -55,17 +55,17 @@ export NCCL_GRAPH_REGISTER=0
 #===============================================================================
 export TOKENIZER_MODEL=${TOKENIZER_MODEL:-moonshotai/Moonlight-16B-A3B-Instruct}
 export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/imdb/imdb_megatron_text_document}
-export CHECKPOINT=${CHECKPOINT:-/lustre/fsw/general_sa/xshang/checkpoints/Moonlight-16B}
 
 export GBS=${GBS:-768}
 export MBS=${MBS:-1}
-export EP_SIZE=${EP_SIZE:-4}
+export EP_SIZE=${EP_SIZE:-8}
 export TP_SIZE=${TP_SIZE:-1}
 export PP_SIZE=${PP_SIZE:-1}
 export CP_SIZE=${CP_SIZE:-1}
 export SEQ_LENGTH=${SEQ_LENGTH:-8192}
 export PR=${PR:-bf16}
 
+export CHECKPOINT=${CHECKPOINT:-/lustre/fsw/general_sa/xshang/checkpoints/Moonlight-16B}/${PR}
 export WANDB_PROJECT=${WANDB_PROJECT:-Moonlight-16B}
 export EXP_NAME=${EXP_NAME:-Moonlight-16B_tp${TP_SIZE}_ep${EP_SIZE}_pp${PP_SIZE}_${PR}_MBS${MBS}_GBS${GBS}_muon}
 
@@ -144,6 +144,7 @@ TRAINING_PARAMS+=" --cuda-graph-scope attn moe_router"
 TRAINING_PARAMS+=" --train-samples 133632768"
 TRAINING_PARAMS+=" --log-interval 1"
 TRAINING_PARAMS+=" --save-interval 100"
+TRAINING_PARAMS+=" --save-retain-interval 1000"
 TRAINING_PARAMS+=" --eval-interval 1000"
 TRAINING_PARAMS+=" --eval-iters 1"
 TRAINING_PARAMS+=" --log-throughput"
