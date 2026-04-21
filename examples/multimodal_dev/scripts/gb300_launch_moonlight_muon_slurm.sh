@@ -38,6 +38,8 @@ export RUN_TIME=${RUN_TIME:-08:00:00}
 export MASTER_PORT=${MASTER_PORT:-6000}
 export JOB_NAME=${JOB_NAME:-Moonlight-16B-Muon}
 export DRY_RUN=${DRY_RUN:-0}
+export MAX_RESTARTS=${MAX_RESTARTS:-100}
+export REQUEUE_SIGNAL_SECONDS=${REQUEUE_SIGNAL_SECONDS:-300}
 
 #===============================================================================
 # Environment variables for training
@@ -219,13 +221,26 @@ if [[ ${DRY_RUN} -eq 1 ]]; then
 #SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
 #SBATCH --output=${SLURM_LOGS}/slurm-%j.log
 #SBATCH --exclusive
+#SBATCH --requeue
+#SBATCH --signal=B:USR1@${REQUEUE_SIGNAL_SECONDS}
 
 set -euo pipefail
 
 export MASTER_ADDR=\$(scontrol show hostnames "\${SLURM_JOB_NODELIST}" | head -n 1)
 export WORLD_SIZE=\${SLURM_NTASKS}
 echo "MASTER_ADDR=\${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}, WORLD_SIZE=\${WORLD_SIZE}"
+echo "SLURM_RESTART_COUNT=\${SLURM_RESTART_COUNT:-0}, MAX_RESTARTS=${MAX_RESTARTS}"
 
+if (( \${SLURM_RESTART_COUNT:-0} >= ${MAX_RESTARTS} )); then
+    echo "[ERROR] Restart limit reached before launch: \${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS}"
+    exit 1
+fi
+
+TIMEOUT_TRIGGERED=0
+SRUN_PID=""
+trap 'TIMEOUT_TRIGGERED=1; echo "[WARN] Received USR1 (time limit approaching), will requeue if allowed."; if [[ -n "\${SRUN_PID}" ]] && kill -0 "\${SRUN_PID}" 2>/dev/null; then kill -TERM "\${SRUN_PID}" || true; fi' USR1
+
+set +e
 srun \\
     --mpi=pmix -l \\
     --kill-on-bad-exit=1 \\
@@ -234,14 +249,36 @@ srun \\
     --container-mounts=${CONTAINER_MOUNTS} \\
     --container-workdir=${WORKDIR} \\
     bash -lc "set -euo pipefail; \\
-        export RANK=\\\${SLURM_PROCID}; \\
-        export LOCAL_RANK=\\\${SLURM_LOCALID}; \\
-        export WORLD_SIZE=\\\${SLURM_NTASKS}; \\
-        export CUDA_VISIBLE_DEVICES=\\\${SLURM_LOCALID}; \\
-        export MASTER_ADDR=\\\${MASTER_ADDR}; \\
-        export MASTER_PORT=${MASTER_PORT}; \\
         ${TRAINING_CMD}" \\
-        2>&1 | tee ${SLURM_LOGS}/\\\${SLURM_JOB_ID}.log
+        2>&1 | tee ${SLURM_LOGS}/\\\${SLURM_JOB_ID}.log &
+SRUN_PID=\$!
+wait "\${SRUN_PID}"
+TRAIN_EXIT=\$?
+set -e
+
+if (( TIMEOUT_TRIGGERED == 1 )); then
+    if (( \${SLURM_RESTART_COUNT:-0} < ${MAX_RESTARTS} )); then
+        echo "[INFO] Requeue on timeout signal (\${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS})."
+        scontrol requeue "\${SLURM_JOB_ID}" || true
+        exit 0
+    fi
+    echo "[ERROR] Timeout signal received but max restarts reached."
+    exit 1
+fi
+
+if (( TRAIN_EXIT == 0 )); then
+    echo "[INFO] Training finished successfully."
+    exit 0
+fi
+
+if (( \${SLURM_RESTART_COUNT:-0} < ${MAX_RESTARTS} )); then
+    echo "[WARN] Training failed with exit=\${TRAIN_EXIT}; requeueing (\${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS})."
+    scontrol requeue "\${SLURM_JOB_ID}" || true
+    exit 0
+fi
+
+echo "[ERROR] Training failed with exit=\${TRAIN_EXIT}; max restarts reached (\${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS})."
+exit "\${TRAIN_EXIT}"
 EOF
     echo "============================================================"
     echo "=== Configuration Summary ==="
@@ -252,6 +289,8 @@ EOF
     echo "GPUS_PER_NODE:    ${GPUS_PER_NODE}"
     echo "WORLD_SIZE:       $((NNODES * N_TASKS_PER_NODE))"
     echo "RUN_TIME:         ${RUN_TIME}"
+    echo "MAX_RESTARTS:     ${MAX_RESTARTS}"
+    echo "REQUEUE_SIGNAL_S: ${REQUEUE_SIGNAL_SECONDS}"
     echo "PRECISION(PR):    ${PR}"
     echo "CHECKPOINT:       ${CHECKPOINT}"
     echo "============================================================"
@@ -271,13 +310,26 @@ else
 #SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
 #SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}.log
 #SBATCH --exclusive
+#SBATCH --requeue
+#SBATCH --signal=B:USR1@${REQUEUE_SIGNAL_SECONDS}
 
 set -euo pipefail
 
 export MASTER_ADDR=\$(scontrol show hostnames "\${SLURM_JOB_NODELIST}" | head -n 1)
 export WORLD_SIZE=\${SLURM_NTASKS}
 echo "MASTER_ADDR=\${MASTER_ADDR}, MASTER_PORT=${MASTER_PORT}, WORLD_SIZE=\${WORLD_SIZE}"
+echo "SLURM_RESTART_COUNT=\${SLURM_RESTART_COUNT:-0}, MAX_RESTARTS=${MAX_RESTARTS}"
 
+if (( \${SLURM_RESTART_COUNT:-0} >= ${MAX_RESTARTS} )); then
+    echo "[ERROR] Restart limit reached before launch: \${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS}"
+    exit 1
+fi
+
+TIMEOUT_TRIGGERED=0
+SRUN_PID=""
+trap 'TIMEOUT_TRIGGERED=1; echo "[WARN] Received USR1 (time limit approaching), will requeue if allowed."; if [[ -n "\${SRUN_PID}" ]] && kill -0 "\${SRUN_PID}" 2>/dev/null; then kill -TERM "\${SRUN_PID}" || true; fi' USR1
+
+set +e
 srun \\
     --mpi=pmix -l \\
     --kill-on-bad-exit=1 \\
@@ -287,7 +339,35 @@ srun \\
     --container-workdir=${WORKDIR} \\
     bash -lc "set -euo pipefail; \\
         ${TRAINING_CMD}" \\
-        2>&1 | tee ${SLURM_LOGS}/\\\${SLURM_JOB_ID}.log
+        2>&1 | tee ${SLURM_LOGS}/\\\${SLURM_JOB_ID}.log &
+SRUN_PID=\$!
+wait "\${SRUN_PID}"
+TRAIN_EXIT=\$?
+set -e
+
+if (( TIMEOUT_TRIGGERED == 1 )); then
+    if (( \${SLURM_RESTART_COUNT:-0} < ${MAX_RESTARTS} )); then
+        echo "[INFO] Requeue on timeout signal (\${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS})."
+        scontrol requeue "\${SLURM_JOB_ID}" || true
+        exit 0
+    fi
+    echo "[ERROR] Timeout signal received but max restarts reached."
+    exit 1
+fi
+
+if (( TRAIN_EXIT == 0 )); then
+    echo "[INFO] Training finished successfully."
+    exit 0
+fi
+
+if (( \${SLURM_RESTART_COUNT:-0} < ${MAX_RESTARTS} )); then
+    echo "[WARN] Training failed with exit=\${TRAIN_EXIT}; requeueing (\${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS})."
+    scontrol requeue "\${SLURM_JOB_ID}" || true
+    exit 0
+fi
+
+echo "[ERROR] Training failed with exit=\${TRAIN_EXIT}; max restarts reached (\${SLURM_RESTART_COUNT:-0}/${MAX_RESTARTS})."
+exit "\${TRAIN_EXIT}"
 EOF
     echo "Job submitted successfully!"
 fi
