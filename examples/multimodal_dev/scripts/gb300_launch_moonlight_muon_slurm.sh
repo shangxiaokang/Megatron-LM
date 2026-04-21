@@ -269,7 +269,7 @@ else
 #SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
 #SBATCH --time=${RUN_TIME}
 #SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
-#SBATCH --output=${SLURM_LOGS}/slurm-%j.log
+#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}.log
 #SBATCH --exclusive
 
 set -euo pipefail
