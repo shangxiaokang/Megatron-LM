@@ -66,6 +66,9 @@ export EP=${EP:-4}
 export PP=${PP:-1}
 export CP=${CP:-1}
 export SEQ_LEN=${SEQ_LEN:-4096}
+export TRAIN_SAMPLES=${TRAIN_SAMPLES:-268554687}
+export LR_WARMUP_SAMPLES=${LR_WARMUP_SAMPLES:-$((100 * GBS))}
+export LR_DECAY_SAMPLES=${LR_DECAY_SAMPLES:-${TRAIN_SAMPLES}}
 
 case "${MODEL_VARIANT}" in
     proxy)
@@ -159,14 +162,14 @@ TRAINING_PARAMS=""
 # Core training + optimizer args
 TRAINING_PARAMS+=" --micro-batch-size ${MBS}"
 TRAINING_PARAMS+=" --global-batch-size ${GBS}"
-TRAINING_PARAMS+=" --train-iters 100"
+TRAINING_PARAMS+=" --train-samples ${TRAIN_SAMPLES}"
 TRAINING_PARAMS+=" --adam-beta1 0.9 --adam-beta2 0.95"
 TRAINING_PARAMS+=" --optimizer muon --muon-momentum 0.95 --muon-scale-mode spectral --muon-extra-scale-factor 0.2 --muon-no-split-qkv"
 TRAINING_PARAMS+=" --lr 1.2e-4"
 TRAINING_PARAMS+=" --min-lr 1.2e-5"
 TRAINING_PARAMS+=" --lr-decay-style cosine"
-TRAINING_PARAMS+=" --lr-warmup-iters 100"
-TRAINING_PARAMS+=" --lr-decay-iters 2000"
+TRAINING_PARAMS+=" --lr-warmup-samples ${LR_WARMUP_SAMPLES}"
+TRAINING_PARAMS+=" --lr-decay-samples ${LR_DECAY_SAMPLES}"
 TRAINING_PARAMS+=" --weight-decay 0.1"
 TRAINING_PARAMS+=" --clip-grad 1.0"
 TRAINING_PARAMS+=" --bf16"
