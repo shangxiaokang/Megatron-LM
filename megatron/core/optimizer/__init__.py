@@ -760,8 +760,15 @@ def _get_megatron_emerging_optimizer(
 
     log_single_rank(logger, logging.INFO, f'Setting up emerging optimizer with config {config}')
 
-    # Tag parameters with optimizer-specific attributes (expert_tp, is_qkv).
+    # Tag parameters with optimizer-specific attributes (expert_tp, is_qkv, is_swiglu_fc1).
     for model_chunk in model_chunks:
+        model_cfg = getattr(model_chunk, 'config', None)
+        if model_cfg is None and hasattr(model_chunk, 'module'):
+            model_cfg = getattr(model_chunk.module, 'config', None)
+        uses_swiglu = (
+            bool(getattr(model_cfg, 'gated_linear_unit', False))
+            and getattr(getattr(model_cfg, 'activation_func', None), '__name__', None) == 'silu'
+        )
         for name, param in model_chunk.named_parameters():
             if not param.requires_grad:
                 continue
@@ -770,6 +777,8 @@ def _get_megatron_emerging_optimizer(
             # TODO(deyuf): support MLA
             if 'linear_qkv.weight' in name and len(param.shape) == 2:
                 param.is_qkv = True
+            if uses_swiglu and 'linear_fc1.weight' in name and len(param.shape) == 2:
+                param.is_swiglu_fc1 = True
 
     # Apply optimizer-specific default param overrides (e.g. muon: non-linear -> adam).
     config_overrides.update(_EMERGING_OPTIMIZERS[eopt_name].default_param_overrides)

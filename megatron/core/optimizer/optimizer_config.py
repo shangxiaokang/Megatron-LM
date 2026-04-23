@@ -262,6 +262,9 @@ class OptimizerConfig:
     muon_split_qkv: bool = True
     """Whether to split QKV parameters for Muon optimizer."""
 
+    muon_split_swiglu: bool = True
+    """Whether to split SwiGLU FC1 parameters into gate/up halves for Muon optimizer."""
+
     muon_nesterov: bool = False
     """Whether to use Nesterov-style momentum in the internal SGD."""
 

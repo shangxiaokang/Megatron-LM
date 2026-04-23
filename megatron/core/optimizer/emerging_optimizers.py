@@ -148,6 +148,8 @@ class TensorParallelMuon(OrthogonalizedOptimizer):
         extra_scale_factor: float = 1.0,
         pg_collection: Optional[ProcessGroupCollection] = None,
         tp_mode: Literal["blockwise", "duplicated", "distributed"] = "duplicated",
+        split_swiglu: bool = False,
+        is_swiglu_fn: Callable[[torch.Tensor], bool] | None = None,
     ) -> None:
         if num_ns_steps < 1:
             raise ValueError(f"num_ns_steps must be at least 1, got {num_ns_steps}")
@@ -183,6 +185,8 @@ class TensorParallelMuon(OrthogonalizedOptimizer):
         self.split_qkv = split_qkv
         self.is_qkv_fn = is_qkv_fn
         self.qkv_split_shapes = qkv_split_shapes
+        self.split_swiglu = split_swiglu
+        self.is_swiglu_fn = is_swiglu_fn
 
         weight_decay_method = "decoupled" if use_decoupled_weight_decay else "l2"
         # Use explicit class call instead of super() so that subclasses with
@@ -247,6 +251,19 @@ class TensorParallelMuon(OrthogonalizedOptimizer):
                 for g in qkv_grads
             ]
             grad = torch.cat(qkv_grads, dim=1).view(grad_shape)
+        elif self.split_swiglu and self.is_swiglu_fn(p):  # type: ignore[misc]
+            if grad.shape[0] % 2 != 0:
+                raise ValueError(
+                    f"SwiGLU FC1 grad first dimension must be even, got shape {tuple(grad.shape)}"
+                )
+            gate_grad, up_grad = torch.chunk(grad, 2, dim=0)
+            grad = torch.cat(
+                (
+                    self.scaled_orthogonalize_fn(gate_grad, tp_group, partition_dim),
+                    self.scaled_orthogonalize_fn(up_grad, tp_group, partition_dim),
+                ),
+                dim=0,
+            )
         else:
             grad = self.scaled_orthogonalize_fn(grad, tp_group, partition_dim)
         return grad
@@ -276,6 +293,8 @@ class TensorParallelAdaptiveMuon(TensorParallelMuon, AdaptiveMuon):
         moment2_method: Literal["adamuon", "normuon"] = "adamuon",
         beta2: float = 0.95,
         eps: float = 1e-8,
+        split_swiglu: bool = False,
+        is_swiglu_fn: Callable[[torch.Tensor], bool] | None = None,
     ) -> None:
         TensorParallelMuon.__init__(
             self,
@@ -288,6 +307,8 @@ class TensorParallelAdaptiveMuon(TensorParallelMuon, AdaptiveMuon):
             split_qkv=split_qkv,
             is_qkv_fn=is_qkv_fn,
             qkv_split_shapes=qkv_split_shapes,
+            split_swiglu=split_swiglu,
+            is_swiglu_fn=is_swiglu_fn,
             fp32_matmul_prec=fp32_matmul_prec,
             coefficient_type=coefficient_type,
             num_ns_steps=num_ns_steps,
@@ -333,6 +354,7 @@ def _muon_config_to_kwargs(config, model_chunks, pg_collection) -> Dict[str, Any
     """Convert OptimizerConfig to TensorParallelMuon constructor kwargs."""
     kwargs = _kwargs_from_config(TensorParallelMuon, "muon", config)
     kwargs["is_qkv_fn"] = lambda p: getattr(p, "is_qkv", False)
+    kwargs["is_swiglu_fn"] = lambda p: getattr(p, "is_swiglu_fc1", False)
     kwargs["qkv_split_shapes"] = _get_qkv_split_shapes(model_chunks[0].config)
     kwargs["pg_collection"] = pg_collection
     return kwargs

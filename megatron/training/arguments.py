@@ -2256,6 +2256,9 @@ def _add_regularization_args(parser):
     group.add_argument('--muon-no-split-qkv', action='store_false', default=True,
                        dest='muon_split_qkv',
                        help='Whether to split QKV parameters for Muon optimizer')
+    group.add_argument('--muon-no-split-swiglu', action='store_false', default=True,
+                       dest='muon_split_swiglu',
+                       help='Whether to split SwiGLU FC1 parameters for Muon optimizer')
     group.add_argument('--muon-nesterov', action='store_true',
                        help='Whether to use Nesterov-style momentum in the internal SGD')
     group.add_argument('--muon-scale-mode', type=str, default='spectral',
