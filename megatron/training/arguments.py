@@ -1705,6 +1705,10 @@ def core_transformer_config_from_args(args, config_class=None):
         kw_args['bias_activation_fusion'] = args.bias_swiglu_fusion
     else:
         kw_args['bias_activation_fusion'] = args.bias_gelu_fusion
+    if (not args.swiglu) and args.experimental_attention_variant == "gated_delta_net":
+        kw_args['activation_func'] = F.silu
+        kw_args['gated_linear_unit'] = False
+        kw_args['bias_activation_fusion'] = False
     if args.squared_relu:
         assert not args.swiglu
         kw_args['activation_func'] = squared_relu
