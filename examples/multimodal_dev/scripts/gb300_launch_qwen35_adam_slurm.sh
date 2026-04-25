@@ -134,7 +134,7 @@ case "${MODEL_VARIANT}" in
 esac
 
 export WANDB_PROJECT=${WANDB_PROJECT:-multimodal-v2-qwen35-vl}
-export EXP_NAME=${EXP_NAME:-qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}_${PR}_MBS${MBS}_GBS${GBS}_MUON}
+export EXP_NAME=${EXP_NAME:-qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}_${PR}_MBS${MBS}_GBS${GBS}_ADAM}
 
 export RECOMPUTE_VISION=${RECOMPUTE_VISION:-0}
 if [[ "${RECOMPUTE_VISION}" -eq 1 ]]; then
@@ -146,7 +146,7 @@ if [[ "${RECOMPUTE}" -eq 1 ]]; then
 fi
 
 export ROOT_DIR=${ROOT_DIR:-/lustre/fsw/general_sa/xshang/Qwen3.5}
-export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}}
+export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}-Adam}
 export TENSORBOARD_LOGS_PATH=${TENSORBOARD_LOGS_PATH:-${ROOT_DIR}/logs}
 export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document}
 
@@ -164,7 +164,6 @@ TRAINING_PARAMS+=" --micro-batch-size ${MBS}"
 TRAINING_PARAMS+=" --global-batch-size ${GBS}"
 TRAINING_PARAMS+=" --train-samples ${TRAIN_SAMPLES}"
 TRAINING_PARAMS+=" --adam-beta1 0.9 --adam-beta2 0.95"
-TRAINING_PARAMS+=" --optimizer muon --muon-momentum 0.95 --muon-scale-mode spectral --muon-extra-scale-factor 1.0 --muon-no-split-qkv"
 TRAINING_PARAMS+=" --lr 1.2e-3"
 TRAINING_PARAMS+=" --min-lr 1.2e-5"
 TRAINING_PARAMS+=" --lr-decay-style cosine"
@@ -244,7 +243,7 @@ TRAINING_PARAMS+=" --seq-length ${SEQ_LEN}"
 TRAINING_PARAMS+=" --normalization RMSNorm"
 TRAINING_PARAMS+=" --apply-layernorm-1p"
 TRAINING_PARAMS+=" --norm-epsilon 1e-06"
-# TRAINING_PARAMS+=" --swiglu"
+TRAINING_PARAMS+=" --swiglu"
 TRAINING_PARAMS+=" --disable-bias-linear"
 TRAINING_PARAMS+=" --untie-embeddings-and-output-weights"
 TRAINING_PARAMS+=" --position-embedding-type rope"
@@ -441,7 +440,7 @@ else
 #SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
 #SBATCH --time=${RUN_TIME}
 #SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
-#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}.log
+#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}_adam.log
 #SBATCH --exclusive
 #SBATCH --requeue
 #SBATCH --open-mode=append
