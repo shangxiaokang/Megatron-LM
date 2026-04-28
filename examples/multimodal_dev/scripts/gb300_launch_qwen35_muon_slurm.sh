@@ -147,9 +147,9 @@ if [[ "${RECOMPUTE}" -eq 1 ]]; then
 fi
 
 export ROOT_DIR=${ROOT_DIR:-/lustre/fsw/general_sa/xshang/Qwen3.5}
-export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}}
+export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}-muon}
 export TENSORBOARD_LOGS_PATH=${TENSORBOARD_LOGS_PATH:-${ROOT_DIR}/logs}
-export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document}
+export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/peS2o/data/v2/pes2o_merged_v2_qwen3_5_text_document}
 export SPLIT=${SPLIT:-969,30,1}
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -447,7 +447,7 @@ else
 #SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
 #SBATCH --time=${RUN_TIME}
 #SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
-#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}.log
+#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}_qwen35-muon.log
 #SBATCH --exclusive
 #SBATCH --requeue
 #SBATCH --open-mode=append

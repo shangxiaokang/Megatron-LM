@@ -36,15 +36,20 @@ PROFILE_STEP_END=${PROFILE_STEP_END:-5}
 PROFILE_RANKS=${PROFILE_RANKS:-0}
 LAUNCHER=${LAUNCHER:-torchrun}
 
-MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b_light}
+MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b}
 VISION_NUM_LAYERS=${VISION_NUM_LAYERS:-}
 PR=${PR:-bf16}
 DATASET_PROVIDER=${DATASET_PROVIDER:-text}
-DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document}
+DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/peS2o/data/v2/pes2o_merged_v2_qwen3_5_text_document}
 SPLIT=${SPLIT:-969,30,1}
 
+MXFP8=${MXFP8:-2D}
+if [[ ${MXFP8} == "2D" ]]; then
+  export NVTE_MXFP8_ENABLE_2D_QUANTIZATION=1
+fi
+
 # Batch sizes
-MBS=${MBS:-1}
+MBS=${MBS:-2}
 GBS=${GBS:-128}
 
 # Parallelism
@@ -121,7 +126,7 @@ esac
 SEQ_LEN=${SEQ_LEN:-4096}
 
 WANDB_PROJECT='multimodal-v2-qwen35-vl'
-EXP_NAME="qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}_${PR}_MBS${MBS}_GBS${GBS}_MUON"
+EXP_NAME="qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}_${PR}_${MXFP8}_MBS${MBS}_GBS${GBS}_MUON"
 
 RECOMPUTE_VISION=${RECOMPUTE_VISION:-0}
 if [ "$RECOMPUTE_VISION" -eq 1 ]; then
@@ -274,6 +279,8 @@ MULTIMODAL_ARGS=(
 
 # --- Qwen3.5 Decoder Architecture (variant-specific dims set above) ---
 # These must match examples/multimodal_dev/models/qwen35_vl/configuration.py
+    #--swiglu
+    #--no-bias-swiglu-fusion
 GPT_MODEL_ARGS=(
     --num-layers "$NUM_LAYERS"
     --hidden-size "$HIDDEN_SIZE"
@@ -287,7 +294,7 @@ GPT_MODEL_ARGS=(
     --normalization RMSNorm
     --apply-layernorm-1p
     --norm-epsilon 1e-06
-    --swiglu
+    --muon-no-split-swiglu
     --disable-bias-linear
     --untie-embeddings-and-output-weights
     --position-embedding-type rope

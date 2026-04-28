@@ -65,7 +65,7 @@ export CP_SIZE=${CP_SIZE:-1}
 export SEQ_LENGTH=${SEQ_LENGTH:-8192}
 export PR=${PR:-bf16}
 
-export CHECKPOINT=${CHECKPOINT:-/lustre/fsw/general_sa/xshang/checkpoints/Moonlight-16B}/${PR}
+export CHECKPOINT=${CHECKPOINT:-/lustre/fsw/general_sa/xshang/checkpoints/Moonlight-16B/${PR}}
 export WANDB_PROJECT=${WANDB_PROJECT:-Moonlight-16B}
 export EXP_NAME=${EXP_NAME:-Moonlight-16B_tp${TP_SIZE}_ep${EP_SIZE}_pp${PP_SIZE}_${PR}_MBS${MBS}_GBS${GBS}_muon}
 
@@ -113,8 +113,8 @@ TRAINING_PARAMS+=" --moe-token-dispatcher-type alltoall"
 # Model architecture
 TRAINING_PARAMS+=" --untie-embeddings-and-output-weights"
 TRAINING_PARAMS+=" --no-bias-swiglu-fusion"
-TRAINING_PARAMS+=" --swiglu"
 TRAINING_PARAMS+=" --use-mcore-models"
+TRAINING_PARAMS+=" --swiglu"
 TRAINING_PARAMS+=" --transformer-impl transformer_engine"
 TRAINING_PARAMS+=" --position-embedding-type rope"
 TRAINING_PARAMS+=" --no-rope-fusion"
@@ -312,6 +312,7 @@ else
 #SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}.log
 #SBATCH --exclusive
 #SBATCH --requeue
+##SBATCH --open-mode=append
 #SBATCH --signal=B:USR1@${REQUEUE_SIGNAL_SECONDS}
 
 set -euo pipefail

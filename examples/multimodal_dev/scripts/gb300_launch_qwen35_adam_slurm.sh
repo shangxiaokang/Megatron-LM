@@ -149,7 +149,7 @@ fi
 export ROOT_DIR=${ROOT_DIR:-/lustre/fsw/general_sa/xshang/Qwen3.5}
 export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}-Adam}
 export TENSORBOARD_LOGS_PATH=${TENSORBOARD_LOGS_PATH:-${ROOT_DIR}/logs}
-export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document}
+export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/peS2o/data/v2/pes2o_merged_v2_qwen3_5_text_document}
 export SPLIT=${SPLIT:-969,30,1}
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
@@ -166,7 +166,7 @@ TRAINING_PARAMS+=" --micro-batch-size ${MBS}"
 TRAINING_PARAMS+=" --global-batch-size ${GBS}"
 TRAINING_PARAMS+=" --train-samples ${TRAIN_SAMPLES}"
 TRAINING_PARAMS+=" --adam-beta1 0.9 --adam-beta2 0.95"
-TRAINING_PARAMS+=" --lr 1.2e-3"
+TRAINING_PARAMS+=" --lr 1.2e-4"
 TRAINING_PARAMS+=" --min-lr 1.2e-5"
 TRAINING_PARAMS+=" --lr-decay-style cosine"
 TRAINING_PARAMS+=" --lr-warmup-samples ${LR_WARMUP_SAMPLES}"
@@ -446,7 +446,7 @@ else
 #SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
 #SBATCH --time=${RUN_TIME}
 #SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
-#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}_adam.log
+#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}_qwen35-adam.log
 #SBATCH --exclusive
 #SBATCH --requeue
 #SBATCH --open-mode=append
