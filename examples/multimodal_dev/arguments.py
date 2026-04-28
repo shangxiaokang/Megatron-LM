@@ -25,7 +25,7 @@ def add_multimodal_args(parser):
         "--dataset-provider",
         type=str,
         default="mock",
-        help="Dataset provider: mock",
+        help="Dataset provider: mock, text, cord_v2",
     )
     group.add_argument(
         "--image-token-id",

@@ -24,7 +24,7 @@ export PYTORCH_CUDA_ALLOC_CONF=expandable_segments:True
 export NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=4
 
 DRY_RUN=${DRY_RUN:-0}
-GPUS_PER_NODE=${GPUS_PER_NODE:-4}
+GPUS_PER_NODE=${GPUS_PER_NODE:-8}
 if [ -n "${SLURM_JOB_NUM_NODES:-}" ]; then
     NUM_NODES="$SLURM_JOB_NUM_NODES"
 else
@@ -38,15 +38,18 @@ LAUNCHER=${LAUNCHER:-torchrun}
 
 MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b_light}
 VISION_NUM_LAYERS=${VISION_NUM_LAYERS:-}
-PR=${PR:-mxfp8}
+PR=${PR:-bf16}
+DATASET_PROVIDER=${DATASET_PROVIDER:-text}
+DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document}
+SPLIT=${SPLIT:-969,30,1}
 
 # Batch sizes
 MBS=${MBS:-1}
-GBS=${GBS:-512}
+GBS=${GBS:-128}
 
 # Parallelism
 TP=${TP:-1}
-EP=${EP:-4}
+EP=${EP:-8}
 PP=${PP:-1}
 
 # Variant-aware architecture defaults.
@@ -162,13 +165,12 @@ MODEL_PARALLEL_ARGS=(
 )
 
 # --- Training ---
-    # --adam-beta1 0.9
-    # --adam-beta2 0.95
 TRAINING_ARGS=(
     --micro-batch-size "$MBS"
     --global-batch-size "$GBS"
     --train-iters 100
-    --adam-beta1 0.9 --adam-beta2 0.95
+    --adam-beta1 0.9
+    --adam-beta2 0.95
     --optimizer muon --muon-momentum 0.95 --muon-scale-mode spectral --muon-extra-scale-factor 0.2 --muon-no-split-qkv
     --lr 1.2e-4
     --min-lr 1.2e-5
@@ -260,7 +262,9 @@ TOKENIZER_ARGS=(
 MULTIMODAL_ARGS=(
     --model-arch qwen35_vl
     --model-variant "$MODEL_VARIANT"
-    --data-path /lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document
+    --dataset-provider "$DATASET_PROVIDER"
+    --data-path "$DATA_PATH"
+    --split "$SPLIT"
     --image-token-id 248056
     --image-size 224
     --total-seq-length "$SEQ_LEN"
@@ -379,6 +383,8 @@ echo "  GPUs per node: $GPUS_PER_NODE"
 echo "  Num nodes:     $NUM_NODES"
 echo "  TP=$TP  EP=$EP  PP=$PP  CP=1"
 echo "  MBS=$MBS  GBS=$GBS"
+echo "  Dataset:       $DATASET_PROVIDER"
+echo "  Data path:     $DATA_PATH"
 echo "  Launcher:      $LAUNCHER"
 echo "  PROFILE:       $PROFILE"
 if [ "$PROFILE" = "1" ]; then

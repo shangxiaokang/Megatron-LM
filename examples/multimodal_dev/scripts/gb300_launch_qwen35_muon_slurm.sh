@@ -58,6 +58,7 @@ export NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=${NUM_OF_HYBRID_EP_RANKS_PER_NVL
 export MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b}
 export VISION_NUM_LAYERS=${VISION_NUM_LAYERS:-}
 export PR=${PR:-bf16}
+export DATASET_PROVIDER=${DATASET_PROVIDER:-text}
 
 export MBS=${MBS:-4}
 export GBS=${GBS:-1024}
@@ -149,6 +150,7 @@ export ROOT_DIR=${ROOT_DIR:-/lustre/fsw/general_sa/xshang/Qwen3.5}
 export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}}
 export TENSORBOARD_LOGS_PATH=${TENSORBOARD_LOGS_PATH:-${ROOT_DIR}/logs}
 export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/OpenWebText/openwebtext_qwen3_5_text_document}
+export SPLIT=${SPLIT:-969,30,1}
 
 if [[ "${DRY_RUN}" -eq 0 ]]; then
     mkdir -p "${CHECKPOINT_STORE_PATH}" "${TENSORBOARD_LOGS_PATH}"
@@ -224,7 +226,9 @@ TRAINING_PARAMS+=" --vocab-size 248320"
 # Multimodal dataset/model args
 TRAINING_PARAMS+=" --model-arch qwen35_vl"
 TRAINING_PARAMS+=" --model-variant ${MODEL_VARIANT}"
+TRAINING_PARAMS+=" --dataset-provider ${DATASET_PROVIDER}"
 TRAINING_PARAMS+=" --data-path ${DATA_PATH}"
+TRAINING_PARAMS+=" --split ${SPLIT}"
 TRAINING_PARAMS+=" --image-token-id 248056"
 TRAINING_PARAMS+=" --image-size 224"
 TRAINING_PARAMS+=" --total-seq-length ${SEQ_LEN}"
@@ -417,6 +421,8 @@ EOF
     echo "CLUSTER:          ${CLUSTER}"
     echo "PARTITION:        ${PARTITION}"
     echo "MODEL_VARIANT:    ${MODEL_VARIANT}"
+    echo "DATASET_PROVIDER: ${DATASET_PROVIDER}"
+    echo "DATA_PATH:        ${DATA_PATH}"
     echo "NODES:            ${NNODES}"
     echo "GPUS_PER_NODE:    ${GPUS_PER_NODE}"
     echo "WORLD_SIZE:       $((NNODES * N_TASKS_PER_NODE))"
