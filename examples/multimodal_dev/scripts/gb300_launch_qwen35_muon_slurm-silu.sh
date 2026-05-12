@@ -57,8 +57,9 @@ export NUM_OF_HYBRID_EP_RANKS_PER_NVLINK_DOMAIN=${NUM_OF_HYBRID_EP_RANKS_PER_NVL
 #===============================================================================
 export MODEL_VARIANT=${MODEL_VARIANT:-35b_a3b}
 export VISION_NUM_LAYERS=${VISION_NUM_LAYERS:-}
-export PR=${PR:-bf16}
+export PR=${PR:-mxfp8}
 export DATASET_PROVIDER=${DATASET_PROVIDER:-text}
+
 MXFP8=${MXFP8:-2D}
 if [[${PR} == 'mxfp8' && ${MXFP8} == "2D" ]]; then
   export NVTE_MXFP8_ENABLE_2D_QUANTIZATION=1
@@ -140,7 +141,7 @@ case "${MODEL_VARIANT}" in
 esac
 
 export WANDB_PROJECT=${WANDB_PROJECT:-multimodal-v2-qwen35-vl}
-export EXP_NAME=${EXP_NAME:-qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}_${PR}_MBS${MBS}_GBS${GBS}_ADAM}
+export EXP_NAME=${EXP_NAME:-qwen35vl_${MODEL_VARIANT}_tp${TP}_ep${EP}_pp${PP}_${PR}_MBS${MBS}_GBS${GBS}_MUON_Silu}
 
 export RECOMPUTE_VISION=${RECOMPUTE_VISION:-0}
 if [[ "${RECOMPUTE_VISION}" -eq 1 ]]; then
@@ -152,7 +153,7 @@ if [[ "${RECOMPUTE}" -eq 1 ]]; then
 fi
 
 export ROOT_DIR=${ROOT_DIR:-/lustre/fsw/general_sa/xshang/Qwen3.5}
-export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}-Adam}
+export CHECKPOINT_STORE_PATH=${CHECKPOINT_STORE_PATH:-${ROOT_DIR}/${PR}-muon-silu}
 export TENSORBOARD_LOGS_PATH=${TENSORBOARD_LOGS_PATH:-${ROOT_DIR}/logs}
 export DATA_PATH=${DATA_PATH:-/lustre/fsw/general_sa/xshang/dataset/peS2o/data/v2/pes2o_merged_v2_qwen3_5_text_document}
 export SPLIT=${SPLIT:-969,30,1}
@@ -171,6 +172,7 @@ TRAINING_PARAMS+=" --micro-batch-size ${MBS}"
 TRAINING_PARAMS+=" --global-batch-size ${GBS}"
 TRAINING_PARAMS+=" --train-samples ${TRAIN_SAMPLES}"
 TRAINING_PARAMS+=" --adam-beta1 0.9 --adam-beta2 0.95"
+TRAINING_PARAMS+=" --optimizer muon --muon-momentum 0.95 --muon-scale-mode spectral --muon-extra-scale-factor 0.2 --muon-no-split-qkv"
 TRAINING_PARAMS+=" --lr 1.2e-4"
 TRAINING_PARAMS+=" --min-lr 1.2e-5"
 TRAINING_PARAMS+=" --lr-decay-style cosine"
@@ -252,7 +254,7 @@ TRAINING_PARAMS+=" --seq-length ${SEQ_LEN}"
 TRAINING_PARAMS+=" --normalization RMSNorm"
 TRAINING_PARAMS+=" --apply-layernorm-1p"
 TRAINING_PARAMS+=" --norm-epsilon 1e-06"
-TRAINING_PARAMS+=" --swiglu"
+# TRAINING_PARAMS+=" --swiglu"
 TRAINING_PARAMS+=" --disable-bias-linear"
 TRAINING_PARAMS+=" --untie-embeddings-and-output-weights"
 TRAINING_PARAMS+=" --position-embedding-type rope"
@@ -451,7 +453,7 @@ else
 #SBATCH --ntasks-per-node=${N_TASKS_PER_NODE}
 #SBATCH --time=${RUN_TIME}
 #SBATCH --job-name=${JOB_NAME}-${ACCOUNT}-${TIMESTAMP}
-#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}_qwen35-adam.log
+#SBATCH --output=${SLURM_LOGS}/slurm-%j-${PARTITION}_qwen35-muon.log
 #SBATCH --exclusive
 #SBATCH --requeue
 #SBATCH --open-mode=append
