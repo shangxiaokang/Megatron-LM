@@ -103,6 +103,48 @@ def is_graph_warmup():
     return _IS_GRAPH_WARMUP
 
 
+def _autoswitch_gemm_requires_eager():
+    """Return True if Transformer Engine AutoswitchGemm needs eager execution."""
+    try:
+        from transformer_engine.debug.features.autoswitch_gemm import (
+            autoswitch_gemm_should_force_eager,
+        )
+
+        return autoswitch_gemm_should_force_eager()
+    except Exception:  # pylint: disable=broad-except
+        return False
+
+
+def _autoswitch_gemm_iteration():
+    """Best-effort current AutoswitchGemm/debug iteration."""
+    try:
+        from transformer_engine.debug.pytorch.debug_state import TEDebugState
+
+        return TEDebugState.get_iteration()
+    except Exception:  # pylint: disable=broad-except
+        return "unknown"
+
+
+def _log_autoswitch_cuda_graph_route(action: str, module=None, reason: str = ""):
+    """Print CUDA graph routing decisions used for AutoswitchGemm debugging."""
+    rank = "unknown"
+    if torch.distributed.is_available() and torch.distributed.is_initialized():
+        rank = torch.distributed.get_rank()
+    module_desc = ""
+    if module is not None:
+        module_desc = module.__class__.__name__
+        layer_number = getattr(module, "layer_number", None)
+        if layer_number is not None:
+            module_desc = f"{module_desc}(layer={layer_number})"
+    print(
+        (
+            f"[TE][autoswitch_cuda_graph][rank={rank}] iteration={_autoswitch_gemm_iteration()} "
+            f"action={action} module={module_desc} reason={reason}"
+        ),
+        flush=True,
+    )
+
+
 def _set_warmup_start():
     """Set graph warmup has started."""
     global _IS_GRAPH_WARMUP
@@ -360,6 +402,24 @@ class _CudagraphGlobalRecord:
         if len(cls.cudagraph_record) == 0:
             return
 
+        if _autoswitch_gemm_requires_eager():
+            # The current iteration is a sampling/high-precision AutoswitchGemm step.
+            # Discard records collected before Autoswitch registered its schedule and
+            # postpone graph creation until a stable quantized iteration.
+            _log_autoswitch_cuda_graph_route(
+                "defer_create", reason="autoswitch_sampling_or_high_precision"
+            )
+            for record in cls.cudagraph_record:
+                runner = record[0]
+                runner.fwd_graph_recorded = False
+                runner.bwd_graph_recorded = False
+                runner.fwd_graph = None
+                runner.bwd_graph = None
+                runner.cudagraph_created = False
+                runner.status = _GraphStatus.FWD_READY
+            cls.cudagraph_record = []
+            return
+
         # Otherwise, create all the recorded cudagraphs.
         has_te_modules = False
         if HAVE_TE_GRAPHS:
@@ -611,6 +671,7 @@ class _CudagraphReplayNode(torch.autograd.Function):
                 FP8GlobalStateManager.set_skip_fp8_weight_update_tensor(not is_first_microbatch)
                 runner.fp8_param_cache_updated = is_first_microbatch
 
+        _log_autoswitch_cuda_graph_route("cuda_graph_forward_replay_enter", runner.base_module)
         runner.fwd_graph.replay()
         return runner.fwd_graph_output_surface
 
@@ -644,6 +705,7 @@ class _CudagraphReplayNode(torch.autograd.Function):
             if user_output_grad.data_ptr() != cudagraph_output_grad.data_ptr():
                 cudagraph_output_grad.copy_(user_output_grad)
 
+        _log_autoswitch_cuda_graph_route("cuda_graph_backward_replay_enter", runner.base_module)
         runner.bwd_graph.replay()
         runner.status = _GraphStatus.FWD_READY
 
@@ -1579,7 +1641,21 @@ class CudaGraphManager(torch.nn.Module):
         if HAVE_TE_GRAPHS:
             is_in_checkpoint_fwd = is_in_checkpoint_fwd or is_fp8_activation_recompute_enabled()
 
+        autoswitch_force_eager = (
+            not is_inference_mode
+            and (self.training or is_in_checkpoint_fwd)
+            and _autoswitch_gemm_requires_eager()
+        )
+        if autoswitch_force_eager:
+            _log_autoswitch_cuda_graph_route(
+                "eager", megatron_module, reason="autoswitch_sampling_or_high_precision"
+            )
+            out = self._call_eager(megatron_module, args, kwargs)
+            self.is_first_microbatch = False
+            return out
+
         if _CudagraphGlobalRecord.cudagraph_created:
+            _log_autoswitch_cuda_graph_route("cuda_graph_created_branch", megatron_module)
             if self.training and torch.is_grad_enabled():
                 # Trigger Mcore DDP pre-forward hooks
                 self.call_ddp_preforward_hook(megatron_module)
@@ -1587,8 +1663,10 @@ class CudaGraphManager(torch.nn.Module):
                     self.call_ddp_preforward_hook(module)
 
             runner = self.get_cudagraph_runner(megatron_module, args, kwargs, self.reuse_cudagraphs)
+            _log_autoswitch_cuda_graph_route("cuda_graph_replay", megatron_module)
             out = runner.replay_graph_capture(self.is_first_microbatch, args, kwargs)
         else:
+            _log_autoswitch_cuda_graph_route("cuda_graph_not_created_branch", megatron_module)
             if is_inference_mode:
                 # Inference generation mode creates graphs immediately
                 runner = self.get_cudagraph_runner(megatron_module, args, kwargs, True)
@@ -1639,6 +1717,7 @@ class CudaGraphManager(torch.nn.Module):
                 if not torch.is_grad_enabled():
                     # If the layer is frozen, we need to set the runner to eval mode.
                     runner.eval()
+                _log_autoswitch_cuda_graph_route("cuda_graph_record", megatron_module)
                 out = runner.record_graph_capture(args, kwargs)
             else:
                 # No cudagraphs were found in training mode with grad disabled, so fallback to

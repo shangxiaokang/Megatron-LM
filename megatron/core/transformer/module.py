@@ -342,16 +342,59 @@ class GraphableMegatronModule(MegatronModule):
             and (is_graph_capturing() or self.cuda_graphs)
         )
 
+    @staticmethod
+    def _autoswitch_gemm_requires_eager():
+        """Return True if AutoswitchGemm requires bypassing TE CUDA graph."""
+        try:
+            from transformer_engine.debug.features.autoswitch_gemm import (
+                autoswitch_gemm_should_force_eager,
+            )
+
+            return autoswitch_gemm_should_force_eager()
+        except Exception:  # pylint: disable=broad-except
+            return False
+
+    @staticmethod
+    def _autoswitch_gemm_iteration():
+        """Best-effort current AutoswitchGemm/debug iteration."""
+        try:
+            from transformer_engine.debug.pytorch.debug_state import TEDebugState
+
+            return TEDebugState.get_iteration()
+        except Exception:  # pylint: disable=broad-except
+            return "unknown"
+
+    def _log_te_cudagraph_route(self, action: str, reason: str = ""):
+        """Print TE CUDA graph routing decisions for AutoswitchGemm debugging."""
+        rank = "unknown"
+        if torch.distributed.is_available() and torch.distributed.is_initialized():
+            rank = torch.distributed.get_rank()
+        print(
+            (
+                f"[TE][autoswitch_te_cuda_graph][rank={rank}] "
+                f"iteration={self._autoswitch_gemm_iteration()} "
+                f"action={action} module={self.__class__.__name__} reason={reason}"
+            ),
+            flush=True,
+        )
+
     def __call__(self, *args, **kwargs):
         if self._should_call_local_cudagraph(*args, **kwargs):
             return self.cudagraph_manager(self, args, kwargs)
         elif self._should_call_te_cudagraph(*args, **kwargs):
+            if self._autoswitch_gemm_requires_eager():
+                self._log_te_cudagraph_route(
+                    "eager", reason="autoswitch_sampling_or_high_precision"
+                )
+                return super().__call__(*args, **kwargs)
             if not self.cuda_graphs:
                 # Do CUDA Graphs capture.
                 cuda_graph_func = self._te_cuda_graph_capture
+                self._log_te_cudagraph_route("te_cuda_graph_capture")
             else:
                 # Do CUDA Graphs replay.
                 cuda_graph_func = self._te_cuda_graph_replay
+                self._log_te_cudagraph_route("te_cuda_graph_replay")
             return cuda_graph_func(*args, **kwargs)
         return super().__call__(*args, **kwargs)
 
