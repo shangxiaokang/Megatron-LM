@@ -369,6 +369,9 @@ class GraphableMegatronModule(MegatronModule):
         rank = "unknown"
         if torch.distributed.is_available() and torch.distributed.is_initialized():
             rank = torch.distributed.get_rank()
+        if rank > 0:
+            return
+
         print(
             (
                 f"[TE][autoswitch_te_cuda_graph][rank={rank}] "
