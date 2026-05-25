@@ -1,0 +1,50 @@
+################################################################################
+# FakeQuant validation config (blockwise FP8 2D 128x128)
+#
+# Goal: verify the FakeQuant feature correctly emulates Float8BlockScaling on
+# linear_fc1 only. AutoswitchGemm is intentionally DISABLED because it shares
+# the fp8_gemm_enabled API with FakeQuant and would interfere with the
+# fake-quant decision under multi-feature OR semantics.
+#
+# How to run (Megatron-LM):
+#   export ENABLE_NVDFW_INSPECT=1
+#   export NVDFW_CONFIG_FILE=/path/to/nvdlfw_inspect_30b.yaml
+#   export NVDFW_LOG_DIR=/path/to/nvdlfw_logs
+#
+# Verification steps:
+#   1) Run training for ~20-50 steps. Confirm no crash (especially no shape
+#      error from _check_blockwise_shape).
+#   2) Confirm log message "Feature=FakeQuant, API=process_tensor" appears in
+#      nvdlfw_inspect_logs/nvdlfw_inspect_globalrank-0.log for the linear_fc1
+#      layers (activation/weight fprop, gradient dgrad).
+#   3) Compare loss / grad norm vs baseline (no nvdlfw_inspect): expect slight
+#      degradation from per-block FP8 quantization noise, not divergence.
+#   4) Compare LogTensorStats max/min/std before and after enabling FakeQuant:
+#      they should be very close (FakeQuant only adds quantization noise).
+################################################################################
+
+# ----------------------------------------------------------------------------
+# Section 1: FakeQuant on linear_fc1 (one section per layer rule)
+# ----------------------------------------------------------------------------
+fake_quant_blockwise_fc1:
+  enabled: True
+  layers:
+    layer_types: [linear_fc1]
+  transformer_engine:
+    FakeQuant:
+      enabled: True
+      quant_format: FP8_BLOCKWISE_E4M3
+      # NOTE: 'weight' is included here. This REQUIRES fp8 model parameters to
+      # be DISABLED in Megatron (drop --fp8-param-gather, or equivalent), so
+      # that the weight tensor stays as bf16/fp16 in memory and can be passed
+      # through modify_tensor() normally. With fp8 model params enabled, the
+      # weight is already a Float8BlockwiseQTensor and TE will raise
+      # "Weight tensor with fp8 model parameters enabled cannot be modified by
+      # modify_tensor()." (debug_quantization.py:599).
+      gemms_struct:
+        - gemm: fprop
+          tensors: [activation, weight]
+        - gemm: dgrad
+          tensors: [gradient]
+        - gemm: wgrad
+          tensors: [activation, gradient]
