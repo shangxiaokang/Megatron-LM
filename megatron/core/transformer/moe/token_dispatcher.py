@@ -20,6 +20,7 @@ from megatron.core.transformer.moe.fused_a2a import (
     fused_dispatch,
     set_deepep_num_sms,
 )
+from megatron.core.transformer.moe.fp8_dispatch import all_to_all_blockwise_fp8_dispatch
 from megatron.core.transformer.moe.moe_utils import (
     ModelCommProcessGroups,
     get_capacity,
@@ -622,9 +623,17 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         self.tokens_per_expert = self._maybe_dtoh_and_synchronize(
             "before_ep_alltoall", self.tokens_per_expert
         )
-        global_input_tokens = all_to_all(
-            self.ep_group, permutated_local_input_tokens, self.output_splits, self.input_splits
-        )
+        if self.config.moe_token_dispatcher_fp8:
+            global_input_tokens = all_to_all_blockwise_fp8_dispatch(
+                self.ep_group,
+                permutated_local_input_tokens,
+                self.output_splits,
+                self.input_splits,
+            )
+        else:
+            global_input_tokens = all_to_all(
+                self.ep_group, permutated_local_input_tokens, self.output_splits, self.input_splits
+            )
         global_probs = all_to_all(
             self.ep_group, permuted_probs, self.output_splits, self.input_splits
         )

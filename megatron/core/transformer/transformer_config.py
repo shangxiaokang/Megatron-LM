@@ -510,6 +510,10 @@ class TransformerConfig(ModelParallelConfig):
     """The type of token dispatcher to use. The default is 'allgather'.
     Options are 'allgather','alltoall' and 'flex'."""
 
+    moe_token_dispatcher_fp8: bool = False
+    """Use blockwise FP8 for the forward hidden-state dispatch in the alltoall MoE token
+    dispatcher. The backward path and combine path remain in the original precision."""
+
     moe_enable_deepep: bool = False
     """[Experimental] Enable DeepEP for efficient token dispatching and combine in MoE models."""
 
@@ -759,6 +763,26 @@ class TransformerConfig(ModelParallelConfig):
             if self.moe_pad_expert_input_to_capacity:
                 raise ValueError(
                     "Flex token dispatcher does not support moe_pad_expert_input_to_capacity"
+                )
+
+        if self.moe_token_dispatcher_fp8:
+            if self.moe_token_dispatcher_type != "alltoall":
+                raise ValueError(
+                    "moe_token_dispatcher_fp8 is only supported with the alltoall token "
+                    "dispatcher."
+                )
+            try:
+                fp8_blockwise_supported = is_te_min_version("2.3.0.dev0")
+            except (ImportError, TypeError):
+                fp8_blockwise_supported = False
+            if not fp8_blockwise_supported:
+                try:
+                    te_version = get_te_version()
+                except ImportError:
+                    te_version = None
+                raise ValueError(
+                    "moe_token_dispatcher_fp8 requires Transformer Engine with blockwise FP8 "
+                    f"support, but your version is {te_version}."
                 )
 
         if self.moe_shared_expert_intermediate_size is not None:
