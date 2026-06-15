@@ -512,7 +512,11 @@ class TransformerConfig(ModelParallelConfig):
 
     moe_token_dispatcher_fp8: bool = False
     """Use blockwise FP8 for the forward hidden-state dispatch in the alltoall MoE token
-    dispatcher. The backward path and combine path remain in the original precision."""
+    dispatcher. This flag does not change dispatch backward or combine forward."""
+
+    moe_token_combine_backward_fp8: bool = False
+    """Use blockwise FP8 for the backward hidden-state combine in the alltoall MoE token
+    dispatcher. The forward combine path remains in the original precision."""
 
     moe_enable_deepep: bool = False
     """[Experimental] Enable DeepEP for efficient token dispatching and combine in MoE models."""
@@ -765,11 +769,11 @@ class TransformerConfig(ModelParallelConfig):
                     "Flex token dispatcher does not support moe_pad_expert_input_to_capacity"
                 )
 
-        if self.moe_token_dispatcher_fp8:
+        if self.moe_token_dispatcher_fp8 or self.moe_token_combine_backward_fp8:
             if self.moe_token_dispatcher_type != "alltoall":
                 raise ValueError(
-                    "moe_token_dispatcher_fp8 is only supported with the alltoall token "
-                    "dispatcher."
+                    "moe_token_dispatcher_fp8 and moe_token_combine_backward_fp8 are only "
+                    "supported with the alltoall token dispatcher."
                 )
             try:
                 fp8_blockwise_supported = is_te_min_version("2.3.0.dev0")
@@ -781,8 +785,9 @@ class TransformerConfig(ModelParallelConfig):
                 except ImportError:
                     te_version = None
                 raise ValueError(
-                    "moe_token_dispatcher_fp8 requires Transformer Engine with blockwise FP8 "
-                    f"support, but your version is {te_version}."
+                    "moe_token_dispatcher_fp8 and moe_token_combine_backward_fp8 require "
+                    "Transformer Engine with blockwise FP8 support, but your version is "
+                    f"{te_version}."
                 )
 
         if self.moe_shared_expert_intermediate_size is not None:

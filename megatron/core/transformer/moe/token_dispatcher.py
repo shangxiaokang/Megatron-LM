@@ -20,7 +20,10 @@ from megatron.core.transformer.moe.fused_a2a import (
     fused_dispatch,
     set_deepep_num_sms,
 )
-from megatron.core.transformer.moe.fp8_dispatch import all_to_all_blockwise_fp8_dispatch
+from megatron.core.transformer.moe.fp8_dispatch import (
+    all_to_all_blockwise_fp8_combine_backward,
+    all_to_all_blockwise_fp8_dispatch,
+)
 from megatron.core.transformer.moe.moe_utils import (
     ModelCommProcessGroups,
     get_capacity,
@@ -775,9 +778,14 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         """
         # Perform expert parallel AlltoAll communication
         # hidden_states: [SEQL, H] -> [SEQL, H/TP]
-        permutated_local_input_tokens = all_to_all(
-            self.ep_group, hidden_states, self.input_splits, self.output_splits
-        )
+        if self.config.moe_token_combine_backward_fp8:
+            permutated_local_input_tokens = all_to_all_blockwise_fp8_combine_backward(
+                self.ep_group, hidden_states, self.input_splits, self.output_splits
+            )
+        else:
+            permutated_local_input_tokens = all_to_all(
+                self.ep_group, hidden_states, self.input_splits, self.output_splits
+            )
         return permutated_local_input_tokens
 
     def combine_postprocess(self, permutated_local_input_tokens):

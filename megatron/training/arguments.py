@@ -2878,8 +2878,12 @@ def _add_moe_args(parser):
                        help='Fuse token rearrangement ops during token dispatching.')
     group.add_argument('--moe-token-dispatcher-fp8', action='store_true',
                        help='Use blockwise FP8 for forward hidden-state dispatch in the alltoall '
-                       'MoE token dispatcher. The combine path and backward dispatch remain in '
-                       'the original precision.')
+                       'MoE token dispatcher. This flag does not change dispatch backward or '
+                       'combine forward.')
+    group.add_argument('--moe-token-combine-backward-fp8', action='store_true',
+                       help='Use blockwise FP8 for backward hidden-state combine communication '
+                       'in the alltoall MoE token dispatcher. The forward combine path remains '
+                       'in the original precision.')
     # Token dropping arguments
     group.add_argument('--moe-expert-capacity-factor', type=float, default=None,
                        help='The capacity factor for each expert, None means no token will be dropped.')
