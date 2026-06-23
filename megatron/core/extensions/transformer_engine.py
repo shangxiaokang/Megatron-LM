@@ -1857,6 +1857,12 @@ except ImportError:
     Fp8Unpadding = None
 
 try:
+    from transformer_engine.pytorch import Fp8PaddingPair  # pylint: disable=unused-import
+
+except ImportError:
+    Fp8PaddingPair = None
+
+try:
     from transformer_engine.pytorch.permutation import (
         moe_permute,
         moe_permute_with_probs,

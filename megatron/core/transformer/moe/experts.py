@@ -44,13 +44,20 @@ from megatron.core.transformer.utils import (
 try:
     import transformer_engine as te  # pylint: disable=unused-import
 
-    from megatron.core.extensions.transformer_engine import Fp8Padding, Fp8Unpadding
+    from megatron.core.extensions.transformer_engine import (
+        Fp8Padding,
+        Fp8PaddingPair,
+        Fp8Unpadding,
+    )
 
     HAVE_TE = True
 
 except ImportError:
 
     HAVE_TE = False
+
+
+_FP8_PAIR_PADDING_DTYPES = (torch.float16, torch.bfloat16, torch.float32)
 
 
 # TODO(Hepteract): delete the usage of the global parallel_state.
@@ -813,6 +820,9 @@ class TEGroupedMLP(MegatronModule):
         if self.config.fp8:
             assert HAVE_TE, "FP8 requires TE."
             self.fp8_padding = Fp8Padding(self.num_local_experts)
+            self.fp8_padding_pair = (
+                Fp8PaddingPair(self.num_local_experts) if Fp8PaddingPair is not None else None
+            )
             self.fp8_unpadding = Fp8Unpadding(self.num_local_experts)
 
     def forward(
@@ -835,12 +845,25 @@ class TEGroupedMLP(MegatronModule):
         tokens_per_expert = tokens_per_expert.tolist()
         if self.config.fp8:
             actual_tokens_per_expert = tokens_per_expert
-            permuted_local_hidden_states, tokens_per_expert = self.fp8_padding(
-                permuted_local_hidden_states, tokens_per_expert
-            )
-            permuted_probs, _ = self.fp8_padding(
-                permuted_probs.unsqueeze(-1), actual_tokens_per_expert
-            )
+            if (
+                self.fp8_padding_pair is not None
+                and permuted_local_hidden_states.dtype in _FP8_PAIR_PADDING_DTYPES
+                and permuted_probs.dtype in _FP8_PAIR_PADDING_DTYPES
+            ):
+                permuted_local_hidden_states, permuted_probs, tokens_per_expert = (
+                    self.fp8_padding_pair(
+                        permuted_local_hidden_states,
+                        permuted_probs.unsqueeze(-1),
+                        actual_tokens_per_expert,
+                    )
+                )
+            else:
+                permuted_local_hidden_states, tokens_per_expert = self.fp8_padding(
+                    permuted_local_hidden_states, tokens_per_expert
+                )
+                permuted_probs, _ = self.fp8_padding(
+                    permuted_probs.unsqueeze(-1), actual_tokens_per_expert
+                )
         else:
             permuted_probs = permuted_probs.unsqueeze(-1)
 
