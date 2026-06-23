@@ -119,6 +119,8 @@ def _all_to_all_blockwise_fp8(
             raise RuntimeError(f"{op_name} only supports 1D blockwise FP8 tensors.")
         if input_._data_format != tex.Float8BlockScaleTensorFormat.COMPACT:
             raise RuntimeError(f"{op_name} requires COMPACT blockwise FP8 tensors.")
+        if input_._fp8_dtype != fp8_dtype:
+            raise RuntimeError(f"{op_name} got FP8 dtype {input_._fp8_dtype}, expected {fp8_dtype}.")
         input_fp8 = input_
         input_dtype = input_.dtype
     else:
@@ -231,6 +233,11 @@ class _AllToAllBlockwiseFP8CombineBackward(torch.autograd.Function):
 def get_fp8_dispatch_dtype():
     """Return the active recipe's forward FP8 dtype for MoE dispatch payloads."""
     return _recipe_fp8_dtype(fprop_tensor=True)
+
+
+def get_fp8_combine_backward_dtype():
+    """Return the active recipe's backward FP8 dtype for MoE combine gradients."""
+    return _recipe_fp8_dtype(fprop_tensor=False)
 
 
 def all_to_all_blockwise_fp8_dispatch(

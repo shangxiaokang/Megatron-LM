@@ -1870,6 +1870,7 @@ try:
         moe_sort_chunks_by_index,
         moe_sort_chunks_by_index_with_probs,
         moe_unpermute,
+        moe_unpermute_bwd_blockwise_quantize,
     )
 
     fused_permute = moe_permute
@@ -1878,6 +1879,7 @@ try:
     fused_sort_chunks_by_index = moe_sort_chunks_by_index
     fused_sort_chunks_by_index_with_probs = moe_sort_chunks_by_index_with_probs
     fused_unpermute = moe_unpermute
+    fused_unpermute_bwd_blockwise_quantize = moe_unpermute_bwd_blockwise_quantize
 
 except ImportError:
     fused_permute = None
@@ -1886,6 +1888,7 @@ except ImportError:
     fused_sort_chunks_by_index = None
     fused_sort_chunks_by_index_with_probs = None
     fused_unpermute = None
+    fused_unpermute_bwd_blockwise_quantize = None
 
 try:
     from transformer_engine.pytorch.cross_entropy import parallel_cross_entropy

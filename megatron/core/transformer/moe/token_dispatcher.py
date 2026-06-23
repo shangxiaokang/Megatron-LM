@@ -22,6 +22,7 @@ from megatron.core.transformer.moe.fused_a2a import (
 )
 from megatron.core.transformer.moe.fp8_dispatch import (
     all_to_all_blockwise_fp8_combine_backward,
+    get_fp8_combine_backward_dtype,
     all_to_all_blockwise_fp8_dispatch,
     get_fp8_dispatch_dtype,
 )
@@ -33,6 +34,7 @@ from megatron.core.transformer.moe.moe_utils import (
     permute,
     permute_with_probs_blockwise_quantize,
     sort_chunks_by_idxs,
+    unpermute_bwd_blockwise_quantize,
     unpermute,
 )
 from megatron.core.transformer.moe.shared_experts import SharedExpertMLP
@@ -831,14 +833,27 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             self.shared_experts.post_forward_comm()
 
         # Unpermutation 1: AlltoAll output to output
-        output = unpermute(
-            permutated_local_input_tokens,
-            self.reversed_local_input_permutation_mapping,
-            restore_shape=self.hidden_shape_before_permute,
-            routing_map=self.routing_map,
-            fused=self.config.moe_permute_fusion or self.fused_permute_quantize,
-            drop_and_pad=self.drop_and_pad,
+        fuse_unpermute_bwd_quantize = (
+            self.config.moe_token_combine_backward_fp8
+            and not self.drop_and_pad
+            and (self.config.moe_permute_fusion or self.fused_permute_quantize)
         )
+        if fuse_unpermute_bwd_quantize:
+            output = unpermute_bwd_blockwise_quantize(
+                permutated_local_input_tokens,
+                self.reversed_local_input_permutation_mapping,
+                restore_shape=self.hidden_shape_before_permute,
+                fp8_dtype=get_fp8_combine_backward_dtype(),
+            )
+        else:
+            output = unpermute(
+                permutated_local_input_tokens,
+                self.reversed_local_input_permutation_mapping,
+                restore_shape=self.hidden_shape_before_permute,
+                routing_map=self.routing_map,
+                fused=self.config.moe_permute_fusion or self.fused_permute_quantize,
+                drop_and_pad=self.drop_and_pad,
+            )
 
         # Reshape the output tensor
         output = output.view(self.hidden_shape)

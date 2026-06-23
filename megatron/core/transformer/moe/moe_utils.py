@@ -21,6 +21,7 @@ try:
         fused_sort_chunks_by_index_with_probs,
         fused_topk_with_score_function,
         fused_unpermute,
+        fused_unpermute_bwd_blockwise_quantize,
         te_general_gemm,
     )
 
@@ -324,6 +325,25 @@ def permute_with_probs_blockwise_quantize(
         num_out_tokens=num_out_tokens,
     )
 
+
+def unpermute_bwd_blockwise_quantize(
+    permuted_tokens: torch.Tensor,
+    sorted_indices: torch.Tensor,
+    restore_shape: torch.Size,
+    fp8_dtype,
+):
+    """Unpermute tokens and quantize its activation gradient to blockwise FP8 in backward."""
+    if not HAVE_TE or fused_unpermute_bwd_blockwise_quantize is None:
+        raise ValueError(
+            "fused_unpermute_bwd_blockwise_quantize is not available. "
+            "Please install a Transformer Engine build with this fused MoE path."
+        )
+    return fused_unpermute_bwd_blockwise_quantize(
+        permuted_tokens,
+        sorted_indices,
+        restore_shape=restore_shape,
+        fp8_dtype=fp8_dtype,
+    )
 
 def unpermute(
     permuted_tokens: torch.Tensor,
