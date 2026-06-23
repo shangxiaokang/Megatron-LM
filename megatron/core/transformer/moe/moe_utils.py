@@ -16,6 +16,7 @@ try:
         fused_moe_aux_loss,
         fused_permute,
         fused_permute_with_probs,
+        fused_permute_with_probs_blockwise_quantize,
         fused_sort_chunks_by_index,
         fused_sort_chunks_by_index_with_probs,
         fused_topk_with_score_function,
@@ -300,6 +301,28 @@ def permute(
     permuted_input = tokens.index_select(0, sorted_indices)
 
     return permuted_input, permuted_probs, sorted_indices
+
+
+def permute_with_probs_blockwise_quantize(
+    tokens,
+    routing_map,
+    probs: torch.Tensor,
+    fp8_dtype,
+    num_out_tokens: Optional[int] = None,
+):
+    """Permute tokens/probs and quantize tokens to compact rowwise blockwise FP8."""
+    if not HAVE_TE or fused_permute_with_probs_blockwise_quantize is None:
+        raise ValueError(
+            "fused_permute_with_probs_blockwise_quantize is not available. "
+            "Please install a Transformer Engine build with this fused MoE path."
+        )
+    return fused_permute_with_probs_blockwise_quantize(
+        tokens,
+        probs,
+        routing_map,
+        fp8_dtype,
+        num_out_tokens=num_out_tokens,
+    )
 
 
 def unpermute(

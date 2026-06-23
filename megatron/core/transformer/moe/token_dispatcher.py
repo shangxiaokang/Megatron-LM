@@ -23,6 +23,7 @@ from megatron.core.transformer.moe.fused_a2a import (
 from megatron.core.transformer.moe.fp8_dispatch import (
     all_to_all_blockwise_fp8_combine_backward,
     all_to_all_blockwise_fp8_dispatch,
+    get_fp8_dispatch_dtype,
 )
 from megatron.core.transformer.moe.moe_utils import (
     ModelCommProcessGroups,
@@ -30,6 +31,7 @@ from megatron.core.transformer.moe.moe_utils import (
     maybe_move_tensor_to_cpu,
     pad_routing_map,
     permute,
+    permute_with_probs_blockwise_quantize,
     sort_chunks_by_idxs,
     unpermute,
 )
@@ -428,6 +430,7 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             MoEAlltoAllTokenDispatcher.cuda_dtoh_stream = torch.cuda.Stream()
 
         self.shared_experts = None
+        self.fused_permute_quantize = False
 
     def preprocess(self, routing_map: torch.Tensor) -> torch.Tensor:
         """
@@ -593,18 +596,33 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             "before_permutation_1", self.tokens_per_expert
         )
         self.hidden_shape_before_permute = hidden_states.shape
-        (
-            permutated_local_input_tokens,
-            permuted_probs,
-            self.reversed_local_input_permutation_mapping,
-        ) = permute(
-            hidden_states,
-            self.routing_map,
-            probs=probs,
-            num_out_tokens=self.num_out_tokens,
-            fused=self.config.moe_permute_fusion,
-            drop_and_pad=self.drop_and_pad,
-        )
+        # No separate knob: FP8 dispatch uses the fused permute+blockwise-quant path by default.
+        self.fused_permute_quantize = self.config.moe_token_dispatcher_fp8 and not self.drop_and_pad
+        if self.fused_permute_quantize:
+            (
+                permutated_local_input_tokens,
+                permuted_probs,
+                self.reversed_local_input_permutation_mapping,
+            ) = permute_with_probs_blockwise_quantize(
+                hidden_states,
+                self.routing_map,
+                probs=probs,
+                fp8_dtype=get_fp8_dispatch_dtype(),
+                num_out_tokens=self.num_out_tokens,
+            )
+        else:
+            (
+                permutated_local_input_tokens,
+                permuted_probs,
+                self.reversed_local_input_permutation_mapping,
+            ) = permute(
+                hidden_states,
+                self.routing_map,
+                probs=probs,
+                num_out_tokens=self.num_out_tokens,
+                fused=self.config.moe_permute_fusion,
+                drop_and_pad=self.drop_and_pad,
+            )
         return permutated_local_input_tokens, permuted_probs
 
     def token_dispatch(self, permutated_local_input_tokens, permuted_probs):
@@ -818,7 +836,7 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             self.reversed_local_input_permutation_mapping,
             restore_shape=self.hidden_shape_before_permute,
             routing_map=self.routing_map,
-            fused=self.config.moe_permute_fusion,
+            fused=self.config.moe_permute_fusion or self.fused_permute_quantize,
             drop_and_pad=self.drop_and_pad,
         )
 

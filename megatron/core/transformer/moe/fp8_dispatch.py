@@ -112,7 +112,18 @@ def _all_to_all_blockwise_fp8(
         block_scaling_dim=1,
         all_gather_usage=True,
     )
-    input_fp8 = quantizer(input_.contiguous())
+    if isinstance(input_, Float8BlockwiseQTensor):
+        if input_._rowwise_data is None or input_._rowwise_scale_inv is None:
+            raise RuntimeError(f"{op_name} got a blockwise FP8 tensor without rowwise data/scales.")
+        if input_._is_2D_scaled:
+            raise RuntimeError(f"{op_name} only supports 1D blockwise FP8 tensors.")
+        if input_._data_format != tex.Float8BlockScaleTensorFormat.COMPACT:
+            raise RuntimeError(f"{op_name} requires COMPACT blockwise FP8 tensors.")
+        input_fp8 = input_
+        input_dtype = input_.dtype
+    else:
+        input_fp8 = quantizer(input_.contiguous())
+        input_dtype = input_.dtype
 
     output_split_sizes = _normalize_split_sizes(output_split_sizes)
     input_split_sizes = _normalize_split_sizes(input_split_sizes)
@@ -132,7 +143,7 @@ def _all_to_all_blockwise_fp8(
 
     recv_fp8 = Float8BlockwiseQTensor(
         shape=recv_data.shape,
-        dtype=input_.dtype,
+        dtype=input_dtype,
         rowwise_data=recv_data,
         rowwise_scale_inv=recv_scale_inv,
         columnwise_data=None,
@@ -144,7 +155,7 @@ def _all_to_all_blockwise_fp8(
         requires_grad=input_.requires_grad,
     )
     if dequantize_output:
-        return recv_fp8.dequantize(dtype=input_.dtype)
+        return recv_fp8.dequantize(dtype=input_dtype)
     return recv_fp8
 
 
@@ -215,6 +226,11 @@ class _AllToAllBlockwiseFP8CombineBackward(torch.autograd.Function):
             op_name="FP8 token combine backward",
         )
         return None, grad_input, None, None, None
+
+
+def get_fp8_dispatch_dtype():
+    """Return the active recipe's forward FP8 dtype for MoE dispatch payloads."""
+    return _recipe_fp8_dtype(fprop_tensor=True)
 
 
 def all_to_all_blockwise_fp8_dispatch(

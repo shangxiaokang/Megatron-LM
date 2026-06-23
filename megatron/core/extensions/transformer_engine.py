@@ -1866,6 +1866,7 @@ try:
     from transformer_engine.pytorch.permutation import (
         moe_permute,
         moe_permute_with_probs,
+        moe_permute_with_probs_blockwise_quantize,
         moe_sort_chunks_by_index,
         moe_sort_chunks_by_index_with_probs,
         moe_unpermute,
@@ -1873,6 +1874,7 @@ try:
 
     fused_permute = moe_permute
     fused_permute_with_probs = moe_permute_with_probs
+    fused_permute_with_probs_blockwise_quantize = moe_permute_with_probs_blockwise_quantize
     fused_sort_chunks_by_index = moe_sort_chunks_by_index
     fused_sort_chunks_by_index_with_probs = moe_sort_chunks_by_index_with_probs
     fused_unpermute = moe_unpermute
@@ -1880,6 +1882,7 @@ try:
 except ImportError:
     fused_permute = None
     fused_permute_with_probs = None
+    fused_permute_with_probs_blockwise_quantize = None
     fused_sort_chunks_by_index = None
     fused_sort_chunks_by_index_with_probs = None
     fused_unpermute = None
