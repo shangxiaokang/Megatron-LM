@@ -598,8 +598,10 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             "before_permutation_1", self.tokens_per_expert
         )
         self.hidden_shape_before_permute = hidden_states.shape
-        # No separate knob: FP8 dispatch uses the fused permute+blockwise-quant path by default.
-        self.fused_permute_quantize = self.config.moe_token_dispatcher_fp8 and not self.drop_and_pad
+        # Keep quantization inside the FP8 A2A helper so its two-stage pipeline can overlap
+        # quantize, communication, and dequantize. The fused permute+blockwise-quant path is
+        # intentionally disabled for this experiment.
+        self.fused_permute_quantize = False
         if self.fused_permute_quantize:
             (
                 permutated_local_input_tokens,
@@ -648,7 +650,8 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         )
         if self.config.moe_token_dispatcher_fp8:
             dequantize_after_dispatch = not (
-                self.config.moe_permute_fusion
+                self.fused_permute_quantize
+                and self.config.moe_permute_fusion
                 and self.num_local_experts > 1
                 and self.tp_size == 1
                 and not self.drop_and_pad

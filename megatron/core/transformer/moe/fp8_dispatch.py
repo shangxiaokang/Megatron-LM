@@ -69,6 +69,108 @@ def _all_to_all_single(
     return output
 
 
+def _all_to_all_single_async(
+    group: torch.distributed.ProcessGroup,
+    input_: torch.Tensor,
+    output_split_sizes: Sequence[int],
+    input_split_sizes: Sequence[int],
+) -> tuple[torch.Tensor, object]:
+    """Asynchronous all-to-all single. Caller owns stream/event synchronization."""
+    input_ = input_.contiguous()
+    output = torch.empty(
+        [sum(output_split_sizes), *input_.shape[1:]],
+        dtype=input_.dtype,
+        device=input_.device,
+    )
+    work = torch.distributed.all_to_all_single(
+        output,
+        input_,
+        output_split_sizes=output_split_sizes,
+        input_split_sizes=input_split_sizes,
+        group=group,
+        async_op=True,
+    )
+    return output, work
+
+
+def _prefix_offsets(sizes: Sequence[int]) -> list[int]:
+    """Exclusive prefix offsets for split-size lists."""
+    offsets = []
+    total = 0
+    for size in sizes:
+        offsets.append(total)
+        total += int(size)
+    return offsets
+
+
+def _stage_split_sizes(
+    sizes: Sequence[int], stage: int, num_stages: int
+) -> tuple[list[int], list[int]]:
+    """Return per-peer row starts and row counts for a pipeline stage."""
+    starts = []
+    stage_sizes = []
+    for size in sizes:
+        size = int(size)
+        base = size // num_stages
+        remainder = size % num_stages
+        stage_size = base + (1 if stage < remainder else 0)
+        start = stage * base + min(stage, remainder)
+        starts.append(start)
+        stage_sizes.append(stage_size)
+    return starts, stage_sizes
+
+
+def _pack_split_rows(
+    tensor: torch.Tensor,
+    split_sizes: Sequence[int],
+    stage_starts: Sequence[int],
+    stage_sizes: Sequence[int],
+) -> torch.Tensor:
+    """Pack the selected rows from every peer chunk into an all-to-all input buffer."""
+    total_rows = sum(stage_sizes)
+    packed = torch.empty(
+        [total_rows, *tensor.shape[1:]],
+        dtype=tensor.dtype,
+        device=tensor.device,
+    )
+    src_offsets = _prefix_offsets(split_sizes)
+    dst_offset = 0
+    for src_offset, stage_start, stage_size in zip(src_offsets, stage_starts, stage_sizes):
+        if stage_size == 0:
+            continue
+        src_start = src_offset + stage_start
+        src_end = src_start + stage_size
+        packed[dst_offset : dst_offset + stage_size].copy_(tensor[src_start:src_end])
+        dst_offset += stage_size
+    return packed
+
+
+def _copy_split_rows_(
+    output: torch.Tensor,
+    packed: torch.Tensor,
+    split_sizes: Sequence[int],
+    stage_starts: Sequence[int],
+    stage_sizes: Sequence[int],
+) -> None:
+    """Scatter a packed stage output back into full all-to-all output order."""
+    dst_offsets = _prefix_offsets(split_sizes)
+    src_offset = 0
+    for dst_offset, stage_start, stage_size in zip(dst_offsets, stage_starts, stage_sizes):
+        if stage_size == 0:
+            continue
+        dst_start = dst_offset + stage_start
+        dst_end = dst_start + stage_size
+        output[dst_start:dst_end].copy_(packed[src_offset : src_offset + stage_size])
+        src_offset += stage_size
+
+
+def _empty_blockwise_payload(num_rows: int, hidden_size: int, device: torch.device):
+    """Create empty rowwise blockwise FP8 payload buffers for zero-row sends."""
+    return (
+        torch.empty((num_rows, hidden_size), dtype=torch.uint8, device=device),
+        torch.empty((num_rows, (hidden_size + 127) // 128), dtype=torch.float32, device=device),
+    )
+
 def _recipe_fp8_dtype(fprop_tensor: bool):
     """Return the TE FP8 dtype that matches the active FP8 recipe."""
     if not HAVE_TE_BLOCKWISE_FP8:
@@ -78,6 +180,205 @@ def _recipe_fp8_dtype(fprop_tensor: bool):
         )
     recipe = FP8GlobalStateManager.get_fp8_recipe()
     return get_fp8_te_dtype(recipe, fprop_tensor=fprop_tensor)
+
+
+def _validate_blockwise_fp8_input(input_: torch.Tensor, fp8_dtype, op_name: str) -> None:
+    """Validate pre-quantized compact rowwise blockwise FP8 payloads."""
+    if input_._rowwise_data is None or input_._rowwise_scale_inv is None:
+        raise RuntimeError(f"{op_name} got a blockwise FP8 tensor without rowwise data/scales.")
+    if input_._is_2D_scaled:
+        raise RuntimeError(f"{op_name} only supports 1D blockwise FP8 tensors.")
+    if input_._data_format != tex.Float8BlockScaleTensorFormat.COMPACT:
+        raise RuntimeError(f"{op_name} requires COMPACT blockwise FP8 tensors.")
+    if input_._fp8_dtype != fp8_dtype:
+        raise RuntimeError(f"{op_name} got FP8 dtype {input_._fp8_dtype}, expected {fp8_dtype}.")
+
+
+def _all_to_all_blockwise_fp8_pipelined(
+    group: torch.distributed.ProcessGroup,
+    input_: torch.Tensor,
+    output_split_sizes: Optional[Sequence[int]],
+    input_split_sizes: Optional[Sequence[int]],
+    fp8_dtype,
+    quantizer,
+    op_name: str,
+    dequantize_output: bool,
+) -> Optional[torch.Tensor]:
+    """Two-stage pipelined blockwise FP8 all-to-all.
+
+    This first version splits every peer chunk along rows, so each rank receives two
+    partial outputs in the same final peer order. It can overlap stage-1 quantization
+    with stage-0 communication, and stage-0 dequant/scatter with stage-1 communication.
+    """
+    num_stages = 2
+    world_size = group.size()
+    output_split_sizes = _normalize_split_sizes(output_split_sizes)
+    input_split_sizes = _normalize_split_sizes(input_split_sizes)
+    if (
+        world_size < num_stages
+        or output_split_sizes is None
+        or input_split_sizes is None
+        or len(output_split_sizes) != world_size
+        or len(input_split_sizes) != world_size
+    ):
+        return None
+
+    hidden_size = input_.shape[1]
+    if sum(input_split_sizes) != input_.shape[0]:
+        return None
+
+    input_is_fp8 = isinstance(input_, Float8BlockwiseQTensor)
+    if input_is_fp8:
+        _validate_blockwise_fp8_input(input_, fp8_dtype, op_name)
+        input_dtype = input_.dtype
+        input_data = input_._rowwise_data
+        input_scale_inv = input_._rowwise_scale_inv
+        requires_grad = input_.requires_grad
+    else:
+        input_dtype = input_.dtype
+        input_data = None
+        input_scale_inv = None
+        requires_grad = input_.requires_grad
+
+    device = input_.device
+    current_stream = torch.cuda.current_stream(device)
+    comm_stream = torch.cuda.Stream(device=device)
+    post_stream = torch.cuda.Stream(device=device)
+
+    if dequantize_output:
+        final_output = torch.empty(
+            (sum(output_split_sizes), hidden_size), dtype=input_dtype, device=device
+        )
+        final_output.record_stream(post_stream)
+        final_data = None
+        final_scale_inv = None
+    else:
+        final_data, final_scale_inv = _empty_blockwise_payload(
+            sum(output_split_sizes), hidden_size, device
+        )
+        final_data.record_stream(post_stream)
+        final_scale_inv.record_stream(post_stream)
+        final_output = None
+
+    stages = []
+    for stage in range(num_stages):
+        input_starts, input_stage_sizes = _stage_split_sizes(
+            input_split_sizes, stage, num_stages
+        )
+        output_starts, output_stage_sizes = _stage_split_sizes(
+            output_split_sizes, stage, num_stages
+        )
+
+        with torch.cuda.stream(current_stream):
+            if input_is_fp8:
+                send_data = _pack_split_rows(
+                    input_data, input_split_sizes, input_starts, input_stage_sizes
+                )
+                send_scale_inv = _pack_split_rows(
+                    input_scale_inv, input_split_sizes, input_starts, input_stage_sizes
+                )
+            else:
+                input_part = _pack_split_rows(
+                    input_, input_split_sizes, input_starts, input_stage_sizes
+                )
+                if input_part.size(0) == 0:
+                    send_data, send_scale_inv = _empty_blockwise_payload(0, hidden_size, device)
+                else:
+                    input_part_fp8 = quantizer(input_part.contiguous())
+                    send_data = input_part_fp8._rowwise_data
+                    send_scale_inv = input_part_fp8._rowwise_scale_inv
+            quant_event = torch.cuda.Event()
+            quant_event.record(current_stream)
+
+        with torch.cuda.stream(comm_stream):
+            comm_stream.wait_event(quant_event)
+            recv_data, data_work = _all_to_all_single_async(
+                group, send_data, output_stage_sizes, input_stage_sizes
+            )
+            recv_scale_inv, scale_work = _all_to_all_single_async(
+                group, send_scale_inv, output_stage_sizes, input_stage_sizes
+            )
+            comm_event = torch.cuda.Event()
+            comm_event.record(comm_stream)
+
+        with torch.cuda.stream(post_stream):
+            post_stream.wait_event(comm_event)
+            recv_data.record_stream(post_stream)
+            recv_scale_inv.record_stream(post_stream)
+            if dequantize_output:
+                if sum(output_stage_sizes) == 0:
+                    output_part = torch.empty((0, hidden_size), dtype=input_dtype, device=device)
+                else:
+                    recv_fp8 = Float8BlockwiseQTensor(
+                        shape=recv_data.shape,
+                        dtype=input_dtype,
+                        rowwise_data=recv_data,
+                        rowwise_scale_inv=recv_scale_inv,
+                        columnwise_data=None,
+                        columnwise_scale_inv=None,
+                        fp8_dtype=fp8_dtype,
+                        quantizer=quantizer,
+                        is_2D_scaled=False,
+                        data_format=tex.Float8BlockScaleTensorFormat.COMPACT,
+                        requires_grad=requires_grad,
+                    )
+                    output_part = recv_fp8.dequantize(dtype=input_dtype)
+                _copy_split_rows_(
+                    final_output,
+                    output_part,
+                    output_split_sizes,
+                    output_starts,
+                    output_stage_sizes,
+                )
+            else:
+                _copy_split_rows_(
+                    final_data,
+                    recv_data,
+                    output_split_sizes,
+                    output_starts,
+                    output_stage_sizes,
+                )
+                _copy_split_rows_(
+                    final_scale_inv,
+                    recv_scale_inv,
+                    output_split_sizes,
+                    output_starts,
+                    output_stage_sizes,
+                )
+            post_event = torch.cuda.Event()
+            post_event.record(post_stream)
+
+        stages.append(
+            {
+                "works": (data_work, scale_work),
+                "send_data": send_data,
+                "send_scale_inv": send_scale_inv,
+                "recv_data": recv_data,
+                "recv_scale_inv": recv_scale_inv,
+                "post_event": post_event,
+            }
+        )
+
+    for stage in stages:
+        for work in stage["works"]:
+            work.wait()
+        current_stream.wait_event(stage["post_event"])
+
+    if dequantize_output:
+        return final_output
+    return Float8BlockwiseQTensor(
+        shape=final_data.shape,
+        dtype=input_dtype,
+        rowwise_data=final_data,
+        rowwise_scale_inv=final_scale_inv,
+        columnwise_data=None,
+        columnwise_scale_inv=None,
+        fp8_dtype=fp8_dtype,
+        quantizer=quantizer,
+        is_2D_scaled=False,
+        data_format=tex.Float8BlockScaleTensorFormat.COMPACT,
+        requires_grad=requires_grad,
+    )
 
 
 def _all_to_all_blockwise_fp8(
@@ -112,15 +413,21 @@ def _all_to_all_blockwise_fp8(
         block_scaling_dim=1,
         all_gather_usage=True,
     )
+    pipelined_output = _all_to_all_blockwise_fp8_pipelined(
+        group,
+        input_,
+        output_split_sizes,
+        input_split_sizes,
+        fp8_dtype=fp8_dtype,
+        quantizer=quantizer,
+        op_name=op_name,
+        dequantize_output=dequantize_output,
+    )
+    if pipelined_output is not None:
+        return pipelined_output
+
     if isinstance(input_, Float8BlockwiseQTensor):
-        if input_._rowwise_data is None or input_._rowwise_scale_inv is None:
-            raise RuntimeError(f"{op_name} got a blockwise FP8 tensor without rowwise data/scales.")
-        if input_._is_2D_scaled:
-            raise RuntimeError(f"{op_name} only supports 1D blockwise FP8 tensors.")
-        if input_._data_format != tex.Float8BlockScaleTensorFormat.COMPACT:
-            raise RuntimeError(f"{op_name} requires COMPACT blockwise FP8 tensors.")
-        if input_._fp8_dtype != fp8_dtype:
-            raise RuntimeError(f"{op_name} got FP8 dtype {input_._fp8_dtype}, expected {fp8_dtype}.")
+        _validate_blockwise_fp8_input(input_, fp8_dtype, op_name)
         input_fp8 = input_
         input_dtype = input_.dtype
     else:
