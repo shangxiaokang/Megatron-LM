@@ -87,8 +87,9 @@ def _all_to_all_blockwise_fp8(
     input_split_sizes: Optional[Sequence[int]],
     fp8_dtype,
     op_name: str,
+    dequantize_output: bool = True,
 ) -> torch.Tensor:
-    """All-to-all with blockwise FP8 payload and BF16/FP16 output."""
+    """All-to-all with blockwise FP8 payload and optional BF16/FP16 output."""
     if group.size() == 1:
         return input_
 
@@ -140,8 +141,11 @@ def _all_to_all_blockwise_fp8(
         quantizer=quantizer,
         is_2D_scaled=False,
         data_format=tex.Float8BlockScaleTensorFormat.COMPACT,
+        requires_grad=input_.requires_grad,
     )
-    return recv_fp8.dequantize(dtype=input_.dtype)
+    if dequantize_output:
+        return recv_fp8.dequantize(dtype=input_.dtype)
+    return recv_fp8
 
 
 class _AllToAllBlockwiseFP8Dispatch(torch.autograd.Function):
@@ -155,6 +159,7 @@ class _AllToAllBlockwiseFP8Dispatch(torch.autograd.Function):
         output_split_sizes: Optional[Sequence[int]],
         input_split_sizes: Optional[Sequence[int]],
         fp8_dtype,
+        dequantize_output: bool = True,
     ) -> torch.Tensor:
         ctx.group = group
         ctx.output_split_sizes = _normalize_split_sizes(output_split_sizes)
@@ -167,6 +172,7 @@ class _AllToAllBlockwiseFP8Dispatch(torch.autograd.Function):
             ctx.input_split_sizes,
             fp8_dtype=fp8_dtype,
             op_name="FP8 token dispatch",
+            dequantize_output=dequantize_output,
         )
 
     @staticmethod
@@ -177,7 +183,7 @@ class _AllToAllBlockwiseFP8Dispatch(torch.autograd.Function):
             ctx.input_split_sizes,
             ctx.output_split_sizes,
         )
-        return None, grad_input, None, None, None
+        return None, grad_input, None, None, None, None
 
 
 class _AllToAllBlockwiseFP8CombineBackward(torch.autograd.Function):
@@ -216,6 +222,7 @@ def all_to_all_blockwise_fp8_dispatch(
     input_: torch.Tensor,
     output_split_sizes: Optional[Sequence[int]] = None,
     input_split_sizes: Optional[Sequence[int]] = None,
+    dequantize_output: bool = True,
 ):
     """All-to-all dispatch using recipe-aligned blockwise FP8 forward payload.
 
@@ -233,6 +240,7 @@ def all_to_all_blockwise_fp8_dispatch(
         output_split_sizes,
         input_split_sizes,
         _recipe_fp8_dtype(fprop_tensor=True),
+        dequantize_output,
     )
 
 

@@ -627,11 +627,18 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             "before_ep_alltoall", self.tokens_per_expert
         )
         if self.config.moe_token_dispatcher_fp8:
+            dequantize_after_dispatch = not (
+                self.config.moe_permute_fusion
+                and self.num_local_experts > 1
+                and self.tp_size == 1
+                and not self.drop_and_pad
+            )
             global_input_tokens = all_to_all_blockwise_fp8_dispatch(
                 self.ep_group,
                 permutated_local_input_tokens,
                 self.output_splits,
                 self.input_splits,
+                dequantize_output=dequantize_after_dispatch,
             )
         else:
             global_input_tokens = all_to_all(
