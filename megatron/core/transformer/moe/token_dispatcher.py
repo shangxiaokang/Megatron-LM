@@ -23,6 +23,7 @@ from megatron.core.transformer.moe.fused_a2a import (
 from megatron.core.transformer.moe.fp8_dispatch import (
     all_to_all_blockwise_fp8_combine_backward,
     all_to_all_blockwise_fp8_dispatch,
+    all_to_all_blockwise_fp8_dispatch_by_expert_split,
 )
 from megatron.core.transformer.moe.moe_utils import (
     ModelCommProcessGroups,
@@ -383,6 +384,12 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         # [ep_size]. Represents the number of tokens sent by the current rank to other
         # EP ranks.
         self.input_splits = None
+        # [ep_size, num_local_experts]. Expert-level splits used by the optional FP8
+        # dispatch overlap prototype, where each peer chunk is split into two local-expert
+        # partitions.
+        self.input_splits_by_expert = None
+        self.output_splits_by_expert = None
+
         # [ep_size]. Represents the number of tokens received by the current rank from
         # other EP ranks.
         self.output_splits = None
@@ -444,7 +451,11 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
 
         Returns:
             A tensor with the number of tokens for each local expert.
+
         """
+        self.input_splits_by_expert = None
+        self.output_splits_by_expert = None
+
         if self.drop_and_pad:
             # Drop and pad the input to capacity.
             num_tokens = routing_map.size(0) * self.config.moe_router_topk
@@ -468,10 +479,22 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
                 dtype=torch.long,
                 device=self.permute_idx_device,
             )
+            if self.config.moe_token_dispatcher_fp8 and self.num_local_experts >= 2:
+                expert_split_matrix = [
+                    [self.capacity for _ in range(self.num_local_experts)]
+                    for _ in range(self.ep_size)
+                ]
+                self.input_splits_by_expert = expert_split_matrix
+                self.output_splits_by_expert = expert_split_matrix
+
             return num_tokens_per_local_expert
 
         # [num_experts], number of tokens assigned to each expert from the current rank's input.
         num_local_tokens_per_expert = routing_map.sum(dim=0).long()
+        if self.config.moe_token_dispatcher_fp8 and self.num_local_experts >= 2:
+            self.input_splits_by_expert = num_local_tokens_per_expert.reshape(
+                self.ep_size, self.num_local_experts
+            )
 
         if (
             self.config.moe_expert_capacity_factor is not None
@@ -515,6 +538,9 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             # self.output_splits represents the number of tokens received by the current rank
             # from other EP rank.
             self.output_splits = num_global_tokens_per_rank[self.tp_rank]
+            if self.config.moe_token_dispatcher_fp8 and self.num_local_experts >= 2:
+                self.output_splits_by_expert = num_global_tokens_per_local_expert[self.tp_rank]
+
             # [tp_size, ep_size] -> [tp_size]
             # self.output_splits_tp represents the number of tokens received by the current
             # rank from other TP rank.
@@ -530,6 +556,10 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
                 self.num_experts
             )
             num_tokens_per_local_expert = num_local_tokens_per_expert
+            if self.config.moe_token_dispatcher_fp8 and self.num_local_experts >= 2:
+                self.output_splits_by_expert = num_local_tokens_per_expert.reshape(
+                    self.ep_size, self.num_local_experts
+                )
 
             # A synchronization is needed before the returns
             # to get the `num_tokens_per_local_expert` CPU value.
@@ -627,12 +657,28 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
             "before_ep_alltoall", self.tokens_per_expert
         )
         if self.config.moe_token_dispatcher_fp8:
-            global_input_tokens = all_to_all_blockwise_fp8_dispatch(
-                self.ep_group,
-                permutated_local_input_tokens,
-                self.output_splits,
-                self.input_splits,
+            use_expert_split = (
+                self.num_local_experts >= 2
+                and self.input_splits_by_expert is not None
+                and self.output_splits_by_expert is not None
             )
+            if use_expert_split:
+                global_input_tokens = all_to_all_blockwise_fp8_dispatch_by_expert_split(
+                    self.ep_group,
+                    permutated_local_input_tokens,
+                    self.output_splits,
+                    self.input_splits,
+                    output_split_sizes_by_expert=self.output_splits_by_expert,
+                    input_split_sizes_by_expert=self.input_splits_by_expert,
+                    num_local_experts=self.num_local_experts,
+                )
+            else:
+                global_input_tokens = all_to_all_blockwise_fp8_dispatch(
+                    self.ep_group,
+                    permutated_local_input_tokens,
+                    self.output_splits,
+                    self.input_splits,
+                )
         else:
             global_input_tokens = all_to_all(
                 self.ep_group, permutated_local_input_tokens, self.output_splits, self.input_splits
@@ -857,6 +903,12 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
                     )
                     self.output_splits = maybe_move_tensor_to_cpu(
                         self.output_splits, as_numpy=True, record_stream=on_side_stream
+                    )
+                    self.input_splits_by_expert = maybe_move_tensor_to_cpu(
+                        self.input_splits_by_expert, as_numpy=True, record_stream=on_side_stream
+                    )
+                    self.output_splits_by_expert = maybe_move_tensor_to_cpu(
+                        self.output_splits_by_expert, as_numpy=True, record_stream=on_side_stream
                     )
                     self.output_splits_tp = maybe_move_tensor_to_cpu(
                         self.output_splits_tp, as_numpy=True, record_stream=on_side_stream
