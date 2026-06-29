@@ -236,6 +236,7 @@ def _all_to_all_blockwise_fp8(
         quantizer=quantizer,
         is_2D_scaled=False,
         data_format=tex.Float8BlockScaleTensorFormat.COMPACT,
+        requires_grad=input_.requires_grad,
     )
     if dequantize:
         return recv_fp8.dequantize(dtype=input_.dtype)
