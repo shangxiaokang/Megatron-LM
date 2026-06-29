@@ -2880,6 +2880,10 @@ def _add_moe_args(parser):
                        help='Use blockwise FP8 for forward hidden-state dispatch in the alltoall '
                        'MoE token dispatcher. This flag does not change dispatch backward or '
                        'combine forward.')
+    group.add_argument('--moe-token-dispatcher-fp8-direct-gemm', action='store_true',
+                       help='Keep the receive side of forward FP8 dispatch as a blockwise FP8 '
+                       'QTensor for the experimental direct-to-GEMM path. Requires '
+                       '--moe-token-dispatcher-fp8.')
     group.add_argument('--moe-token-combine-backward-fp8', action='store_true',
                        help='Use blockwise FP8 for backward hidden-state combine communication '
                        'in the alltoall MoE token dispatcher. The forward combine path remains '

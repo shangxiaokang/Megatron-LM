@@ -635,6 +635,7 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
                 permutated_local_input_tokens,
                 self.output_splits,
                 self.input_splits,
+                dequantize=not self.config.moe_token_dispatcher_fp8_direct_gemm,
             )
         else:
             global_input_tokens = all_to_all(
