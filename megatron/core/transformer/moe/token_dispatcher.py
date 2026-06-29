@@ -23,6 +23,9 @@ from megatron.core.transformer.moe.fused_a2a import (
 from megatron.core.transformer.moe.fp8_dispatch import (
     all_to_all_blockwise_fp8_combine_backward,
     all_to_all_blockwise_fp8_dispatch,
+    is_blockwise_fp8_qtensor,
+    sort_blockwise_fp8_qtensor_by_idxs,
+    transpose_blockwise_fp8_qtensor_token_groups,
 )
 from megatron.core.transformer.moe.moe_utils import (
     ModelCommProcessGroups,
@@ -656,10 +659,18 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         Returns:
             A tuple of processed tokens, token counts per expert, and processed probabilities.
         """
+        fp8_qtensor_dispatch = is_blockwise_fp8_qtensor(global_input_tokens)
+
         if self.shared_experts is not None:
+            if fp8_qtensor_dispatch:
+                raise RuntimeError(
+                    "Blockwise FP8 dispatch postprocess does not support shared expert overlap."
+                )
             self.shared_experts.linear_fc1_forward_and_act(global_input_tokens)
 
         if self.tp_size > 1:
+            if fp8_qtensor_dispatch:
+                raise RuntimeError("Blockwise FP8 dispatch postprocess does not support TP yet.")
             if self.output_splits_tp is None:
                 output_split_sizes = None
             else:
@@ -677,17 +688,25 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         )
         if self.num_local_experts > 1:
             if self.drop_and_pad:
-                global_input_tokens = (
-                    global_input_tokens.view(
+                if fp8_qtensor_dispatch:
+                    global_input_tokens = transpose_blockwise_fp8_qtensor_token_groups(
+                        global_input_tokens,
                         self.tp_size * self.ep_size,
                         self.num_local_experts,
                         self.capacity,
-                        *global_input_tokens.size()[1:],
                     )
-                    .transpose(0, 1)
-                    .contiguous()
-                    .flatten(start_dim=0, end_dim=2)
-                )
+                else:
+                    global_input_tokens = (
+                        global_input_tokens.view(
+                            self.tp_size * self.ep_size,
+                            self.num_local_experts,
+                            self.capacity,
+                            *global_input_tokens.size()[1:],
+                        )
+                        .transpose(0, 1)
+                        .contiguous()
+                        .flatten(start_dim=0, end_dim=2)
+                    )
                 global_probs = (
                     global_probs.view(
                         self.tp_size * self.ep_size,
@@ -700,13 +719,27 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
                     .flatten(start_dim=0, end_dim=2)
                 )
             else:
-                global_input_tokens, global_probs = sort_chunks_by_idxs(
-                    global_input_tokens,
-                    self.num_global_tokens_per_local_expert.ravel(),
-                    self.sort_input_by_local_experts,
-                    probs=global_probs,
-                    fused=self.config.moe_permute_fusion,
-                )
+                if fp8_qtensor_dispatch:
+                    split_sizes = self.num_global_tokens_per_local_expert.ravel()
+                    global_input_tokens = sort_blockwise_fp8_qtensor_by_idxs(
+                        global_input_tokens,
+                        split_sizes,
+                        self.sort_input_by_local_experts,
+                    )
+                    global_probs, _ = sort_chunks_by_idxs(
+                        global_probs,
+                        split_sizes,
+                        self.sort_input_by_local_experts,
+                        fused=False,
+                    )
+                else:
+                    global_input_tokens, global_probs = sort_chunks_by_idxs(
+                        global_input_tokens,
+                        self.num_global_tokens_per_local_expert.ravel(),
+                        self.sort_input_by_local_experts,
+                        probs=global_probs,
+                        fused=self.config.moe_permute_fusion,
+                    )
 
         tokens_per_expert = self._maybe_dtoh_and_synchronize(
             "before_finish", self.tokens_per_expert

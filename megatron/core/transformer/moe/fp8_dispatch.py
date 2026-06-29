@@ -69,6 +69,101 @@ def _all_to_all_single(
     return output
 
 
+def is_blockwise_fp8_qtensor(input_: torch.Tensor) -> bool:
+    """Return whether the tensor is a TE blockwise FP8 QTensor."""
+    return HAVE_TE_BLOCKWISE_FP8 and isinstance(input_, Float8BlockwiseQTensor)
+
+
+def _make_blockwise_fp8_qtensor_like(
+    input_: torch.Tensor,
+    rowwise_data: torch.Tensor,
+    rowwise_scale_inv: torch.Tensor,
+) -> torch.Tensor:
+    """Construct a blockwise FP8 QTensor after token-dimension-only movement."""
+    return Float8BlockwiseQTensor(
+        shape=rowwise_data.shape,
+        dtype=input_.dtype,
+        rowwise_data=rowwise_data,
+        rowwise_scale_inv=rowwise_scale_inv,
+        columnwise_data=None,
+        columnwise_scale_inv=None,
+        fp8_dtype=input_._fp8_dtype,
+        quantizer=input_._quantizer,
+        is_2D_scaled=input_._is_2D_scaled,
+        data_format=input_._data_format,
+        requires_grad=input_.requires_grad,
+    )
+
+
+def _validate_blockwise_fp8_rowwise_compact(input_: torch.Tensor, op_name: str) -> None:
+    """Validate the compact rowwise blockwise FP8 layout used by token exchange."""
+    if not is_blockwise_fp8_qtensor(input_):
+        raise TypeError(f"{op_name} expects a Float8BlockwiseQTensor.")
+    if input_._rowwise_data is None or input_._rowwise_scale_inv is None:
+        raise RuntimeError(f"{op_name} requires rowwise FP8 data and scales.")
+    if input_._columnwise_data is not None or input_._columnwise_scale_inv is not None:
+        raise RuntimeError(f"{op_name} does not support columnwise FP8 data.")
+    if input_.dim() != 2:
+        raise RuntimeError(f"{op_name} expects a 2D [tokens, hidden] tensor, got {input_.shape}.")
+    if input_._data_format != tex.Float8BlockScaleTensorFormat.COMPACT:
+        raise RuntimeError(f"{op_name} expects COMPACT blockwise FP8 scale format.")
+    if input_._is_2D_scaled:
+        raise RuntimeError(f"{op_name} expects 1D block scaling.")
+    if input_._rowwise_data.shape[0] != input_._rowwise_scale_inv.shape[0]:
+        raise RuntimeError(f"{op_name} expects data and scale rows to match token rows.")
+
+
+def sort_blockwise_fp8_qtensor_by_idxs(
+    input_: torch.Tensor,
+    split_sizes: Sequence[int],
+    sorted_idxs: Sequence[int],
+) -> torch.Tensor:
+    """Sort a blockwise FP8 QTensor by token chunks.
+
+    The compact rowwise blockwise scale tensor is laid out as [tokens, hidden_blocks], so token
+    chunk movement must be applied to both FP8 data and scale rows.
+    """
+    _validate_blockwise_fp8_rowwise_compact(input_, "Blockwise FP8 chunk sort")
+    split_sizes = _normalize_split_sizes(split_sizes)
+    sorted_idxs = _normalize_split_sizes(sorted_idxs)
+
+    data_chunks = torch.split(input_._rowwise_data, split_sizes, dim=0)
+    scale_chunks = torch.split(input_._rowwise_scale_inv, split_sizes, dim=0)
+    rowwise_data = torch.cat([data_chunks[i] for i in sorted_idxs], dim=0)
+    rowwise_scale_inv = torch.cat([scale_chunks[i] for i in sorted_idxs], dim=0)
+    return _make_blockwise_fp8_qtensor_like(input_, rowwise_data, rowwise_scale_inv)
+
+
+def transpose_blockwise_fp8_qtensor_token_groups(
+    input_: torch.Tensor,
+    first_dim: int,
+    second_dim: int,
+    third_dim: int,
+) -> torch.Tensor:
+    """Apply view(first, second, third, hidden).transpose(0, 1).flatten(0, 2).
+
+    This mirrors the alltoall dispatcher drop-and-pad token reorder while keeping rowwise FP8
+    scales aligned with token rows.
+    """
+    _validate_blockwise_fp8_rowwise_compact(input_, "Blockwise FP8 token group transpose")
+    hidden = input_._rowwise_data.shape[1:]
+    scale_hidden = input_._rowwise_scale_inv.shape[1:]
+
+    rowwise_data = (
+        input_._rowwise_data.view(first_dim, second_dim, third_dim, *hidden)
+        .transpose(0, 1)
+        .contiguous()
+        .flatten(start_dim=0, end_dim=2)
+    )
+    rowwise_scale_inv = (
+        input_._rowwise_scale_inv.view(first_dim, second_dim, third_dim, *scale_hidden)
+        .transpose(0, 1)
+        .contiguous()
+        .flatten(start_dim=0, end_dim=2)
+    )
+    return _make_blockwise_fp8_qtensor_like(input_, rowwise_data, rowwise_scale_inv)
+
+
 def _recipe_fp8_dtype(fprop_tensor: bool):
     """Return the TE FP8 dtype that matches the active FP8 recipe."""
     if not HAVE_TE_BLOCKWISE_FP8:
