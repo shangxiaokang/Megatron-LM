@@ -2888,6 +2888,10 @@ def _add_moe_args(parser):
                        help='Use blockwise FP8 for backward hidden-state combine communication '
                        'in the alltoall MoE token dispatcher. The forward combine path remains '
                        'in the original precision.')
+    group.add_argument('--moe-token-combine-backward-fp8-direct-gemm', action='store_true',
+                       help='Keep the receive side of backward FP8 combine as a blockwise FP8 '
+                       'QTensor for the experimental direct-to-GEMM expert backward path. '
+                       'Requires --moe-token-combine-backward-fp8.')
     # Token dropping arguments
     group.add_argument('--moe-expert-capacity-factor', type=float, default=None,
                        help='The capacity factor for each expert, None means no token will be dropped.')

@@ -522,6 +522,10 @@ class TransformerConfig(ModelParallelConfig):
     """Use blockwise FP8 for the backward hidden-state combine in the alltoall MoE token
     dispatcher. The forward combine path remains in the original precision."""
 
+    moe_token_combine_backward_fp8_direct_gemm: bool = False
+    """Keep the receive side of backward FP8 combine as a blockwise FP8 QTensor for the
+    experimental direct-to-GEMM expert backward path. Requires moe_token_combine_backward_fp8."""
+
     moe_enable_deepep: bool = False
     """[Experimental] Enable DeepEP for efficient token dispatching and combine in MoE models."""
 
@@ -789,16 +793,35 @@ class TransformerConfig(ModelParallelConfig):
                     "overlap yet."
                 )
 
+        if self.moe_token_combine_backward_fp8_direct_gemm:
+            if not self.moe_token_combine_backward_fp8:
+                raise ValueError(
+                    "moe_token_combine_backward_fp8_direct_gemm requires "
+                    "moe_token_combine_backward_fp8."
+                )
+            if self.expert_tensor_parallel_size != 1:
+                raise ValueError(
+                    "moe_token_combine_backward_fp8_direct_gemm does not support expert tensor "
+                    "parallelism yet."
+                )
+            if self.moe_shared_expert_overlap:
+                raise ValueError(
+                    "moe_token_combine_backward_fp8_direct_gemm does not support shared expert "
+                    "overlap yet."
+                )
+
         if (
             self.moe_token_dispatcher_fp8
             or self.moe_token_dispatcher_fp8_direct_gemm
             or self.moe_token_combine_backward_fp8
+            or self.moe_token_combine_backward_fp8_direct_gemm
         ):
             if self.moe_token_dispatcher_type != "alltoall":
                 raise ValueError(
-                    "moe_token_dispatcher_fp8, moe_token_dispatcher_fp8_direct_gemm, and "
-                    "moe_token_combine_backward_fp8 are only supported with the alltoall token "
-                    "dispatcher."
+                    "moe_token_dispatcher_fp8, moe_token_dispatcher_fp8_direct_gemm, "
+                    "moe_token_combine_backward_fp8, and "
+                    "moe_token_combine_backward_fp8_direct_gemm are only supported with the "
+                    "alltoall token dispatcher."
                 )
             try:
                 fp8_blockwise_supported = is_te_min_version("2.3.0.dev0")
@@ -810,8 +833,9 @@ class TransformerConfig(ModelParallelConfig):
                 except ImportError:
                     te_version = None
                 raise ValueError(
-                    "moe_token_dispatcher_fp8, moe_token_dispatcher_fp8_direct_gemm, and "
-                    "moe_token_combine_backward_fp8 require Transformer Engine with "
+                    "moe_token_dispatcher_fp8, moe_token_dispatcher_fp8_direct_gemm, "
+                    "moe_token_combine_backward_fp8, and "
+                    "moe_token_combine_backward_fp8_direct_gemm require Transformer Engine with "
                     "blockwise FP8 support, but your version is "
                     f"{te_version}."
                 )

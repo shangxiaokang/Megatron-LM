@@ -292,11 +292,13 @@ class _AllToAllBlockwiseFP8CombineBackward(torch.autograd.Function):
         output_split_sizes: Optional[Sequence[int]],
         input_split_sizes: Optional[Sequence[int]],
         fp8_dtype,
+        dequantize: bool,
     ) -> torch.Tensor:
         ctx.group = group
         ctx.output_split_sizes = _normalize_split_sizes(output_split_sizes)
         ctx.input_split_sizes = _normalize_split_sizes(input_split_sizes)
         ctx.fp8_dtype = fp8_dtype
+        ctx.dequantize = dequantize
         return _all_to_all_single(group, input_, ctx.output_split_sizes, ctx.input_split_sizes)
 
     @staticmethod
@@ -308,8 +310,9 @@ class _AllToAllBlockwiseFP8CombineBackward(torch.autograd.Function):
             ctx.output_split_sizes,
             fp8_dtype=ctx.fp8_dtype,
             op_name="FP8 token combine backward",
+            dequantize=ctx.dequantize,
         )
-        return None, grad_input, None, None, None
+        return None, grad_input, None, None, None, None
 
 
 def all_to_all_blockwise_fp8_dispatch(
@@ -345,6 +348,7 @@ def all_to_all_blockwise_fp8_combine_backward(
     input_: torch.Tensor,
     output_split_sizes: Optional[Sequence[int]] = None,
     input_split_sizes: Optional[Sequence[int]] = None,
+    dequantize: bool = True,
 ):
     """All-to-all combine with original-precision forward and FP8 backward communication.
 
@@ -362,4 +366,5 @@ def all_to_all_blockwise_fp8_combine_backward(
         output_split_sizes,
         input_split_sizes,
         _recipe_fp8_dtype(fprop_tensor=False),
+        dequantize,
     )

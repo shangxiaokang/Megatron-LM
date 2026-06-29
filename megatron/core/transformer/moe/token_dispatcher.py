@@ -50,6 +50,100 @@ from megatron.core.transformer.transformer_config import TransformerConfig
 """
 
 
+def _to_int_list(values):
+    """Convert split sizes or indices to a Python int list."""
+    if isinstance(values, torch.Tensor):
+        values = values.detach().cpu().tolist()
+    elif hasattr(values, "tolist"):
+        values = values.tolist()
+    return [int(value) for value in values]
+
+
+def _invert_index_list(indices):
+    """Return inverse permutation for a list of chunk indices."""
+    inverse = [0] * len(indices)
+    for output_idx, input_idx in enumerate(indices):
+        inverse[input_idx] = output_idx
+    return inverse
+
+
+class _SortChunksByIdxsWithFP8Backward(torch.autograd.Function):
+    """Sort chunks in forward and support blockwise FP8 QTensor gradients."""
+
+    @staticmethod
+    def forward(ctx, input_, split_sizes, sorted_idxs, fused: bool):
+        ctx.split_sizes = _to_int_list(split_sizes)
+        ctx.sorted_idxs = _to_int_list(sorted_idxs)
+        output, _ = sort_chunks_by_idxs(input_, split_sizes, sorted_idxs, fused=fused)
+        return output
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        output_split_sizes = [ctx.split_sizes[i] for i in ctx.sorted_idxs]
+        restore_idxs = _invert_index_list(ctx.sorted_idxs)
+        if is_blockwise_fp8_qtensor(grad_output):
+            grad_input = sort_blockwise_fp8_qtensor_by_idxs(
+                grad_output,
+                output_split_sizes,
+                restore_idxs,
+            )
+        else:
+            grad_chunks = torch.split(grad_output, output_split_sizes, dim=0)
+            grad_input = torch.cat([grad_chunks[i] for i in restore_idxs], dim=0)
+        return grad_input, None, None, None
+
+
+def _sort_chunks_by_idxs_with_fp8_backward(input_, split_sizes, sorted_idxs, fused: bool):
+    """Sort chunks while preserving a direct-FP8 gradient path."""
+    return _SortChunksByIdxsWithFP8Backward.apply(input_, split_sizes, sorted_idxs, fused)
+
+
+class _TransposeTokenGroupsWithFP8Backward(torch.autograd.Function):
+    """Transpose token groups in forward and support blockwise FP8 QTensor gradients."""
+
+    @staticmethod
+    def forward(ctx, input_, first_dim: int, second_dim: int, third_dim: int):
+        ctx.first_dim = int(first_dim)
+        ctx.second_dim = int(second_dim)
+        ctx.third_dim = int(third_dim)
+        return (
+            input_.view(ctx.first_dim, ctx.second_dim, ctx.third_dim, *input_.size()[1:])
+            .transpose(0, 1)
+            .contiguous()
+            .flatten(start_dim=0, end_dim=2)
+        )
+
+    @staticmethod
+    def backward(ctx, grad_output):
+        if is_blockwise_fp8_qtensor(grad_output):
+            grad_input = transpose_blockwise_fp8_qtensor_token_groups(
+                grad_output,
+                ctx.second_dim,
+                ctx.first_dim,
+                ctx.third_dim,
+            )
+        else:
+            grad_input = (
+                grad_output.view(
+                    ctx.second_dim,
+                    ctx.first_dim,
+                    ctx.third_dim,
+                    *grad_output.size()[1:],
+                )
+                .transpose(0, 1)
+                .contiguous()
+                .flatten(start_dim=0, end_dim=2)
+            )
+        return grad_input, None, None, None
+
+
+def _transpose_token_groups_with_fp8_backward(
+    input_, first_dim: int, second_dim: int, third_dim: int
+):
+    """Transpose token groups while preserving a direct-FP8 gradient path."""
+    return _TransposeTokenGroupsWithFP8Backward.apply(input_, first_dim, second_dim, third_dim)
+
+
 class MoETokenDispatcher:
     """
     MoE Token Dispatcher
@@ -757,24 +851,40 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         # Unpermutation 2: Unsort tokens by local expert.
         if self.num_local_experts > 1:
             if self.drop_and_pad:
-                hidden_states = (
-                    hidden_states.view(
+                if self.config.moe_token_combine_backward_fp8_direct_gemm:
+                    hidden_states = _transpose_token_groups_with_fp8_backward(
+                        hidden_states,
                         self.num_local_experts,
                         self.tp_size * self.ep_size,
                         self.capacity,
-                        *hidden_states.size()[1:],
                     )
-                    .transpose(0, 1)
-                    .contiguous()
-                    .flatten(start_dim=0, end_dim=2)
-                )
+                else:
+                    hidden_states = (
+                        hidden_states.view(
+                            self.num_local_experts,
+                            self.tp_size * self.ep_size,
+                            self.capacity,
+                            *hidden_states.size()[1:],
+                        )
+                        .transpose(0, 1)
+                        .contiguous()
+                        .flatten(start_dim=0, end_dim=2)
+                    )
             else:
-                hidden_states, _ = sort_chunks_by_idxs(
-                    hidden_states,
-                    self.num_global_tokens_per_local_expert.T.ravel(),
-                    self.restore_output_by_local_experts,
-                    fused=self.config.moe_permute_fusion,
-                )
+                if self.config.moe_token_combine_backward_fp8_direct_gemm:
+                    hidden_states = _sort_chunks_by_idxs_with_fp8_backward(
+                        hidden_states,
+                        self.num_global_tokens_per_local_expert.T.ravel(),
+                        self.restore_output_by_local_experts,
+                        self.config.moe_permute_fusion,
+                    )
+                else:
+                    hidden_states, _ = sort_chunks_by_idxs(
+                        hidden_states,
+                        self.num_global_tokens_per_local_expert.T.ravel(),
+                        self.restore_output_by_local_experts,
+                        fused=self.config.moe_permute_fusion,
+                    )
 
         if self.tp_size > 1:
             if self.output_splits_tp is None:
@@ -814,7 +924,11 @@ class MoEAlltoAllTokenDispatcher(MoETokenDispatcher):
         # hidden_states: [SEQL, H] -> [SEQL, H/TP]
         if self.config.moe_token_combine_backward_fp8:
             permutated_local_input_tokens = all_to_all_blockwise_fp8_combine_backward(
-                self.ep_group, hidden_states, self.input_splits, self.output_splits
+                self.ep_group,
+                hidden_states,
+                self.input_splits,
+                self.output_splits,
+                dequantize=not self.config.moe_token_combine_backward_fp8_direct_gemm,
             )
         else:
             permutated_local_input_tokens = all_to_all(
