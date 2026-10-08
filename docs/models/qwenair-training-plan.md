@@ -49,8 +49,8 @@ Bridge 负责配置注册、模型实例化与 checkpoint 双向转换；本工�
 
 ### C. 并行、真实权重与完整训练
 
-1. 按 TP=1→2→4→8、EP=1→8、PP=1→2/4、CP=1→2 的顺序启用并行；每一档先测试小模型与固定 batch 的 loss/梯度等价，再测试 checkpoint restart。任何新增并行方式都要核对 HC 四流和 QSA indexer 的分片及同步。
-2. PLE 大表只在足够的 TP/optimizer sharding 下构造；物理 128 shard 逐片读取并映射到目标 rank，限制峰值内存，校验每片 hash。先完成真实 checkpoint header/key/dtype/shape inventory，再实现 converter；缺少真实 checkpoint 时保留合成 roundtrip 结论。
+1. 按第 6 节的并行/优化器/内存依赖顺序推进；每一档先测试小模型与固定 batch 的 loss/梯度等价，再测试 checkpoint restart。TP、PP、CP、EP 不是互不相关的开关，进程组、参数所有权和 router aux 必须一起定义。
+2. PLE 大表只在足够的表分片、优化器分片或 offload 下构造；物理 128 shard 是 checkpoint 文件布局，不能直接当作运行时表进程组大小。逐片读取并映射到目标 rank，限制峰值内存，校验每片 hash。先完成真实 checkpoint header/key/dtype/shape inventory，再实现 converter；缺少真实 checkpoint 时保留合成 roundtrip 结论。
 3. 启用 177B 目标配置，跑多节点连续训练与保存/恢复：记录每步 loss、各模块梯度、峰值显存、吞吐、数值异常、optimizer 状态和重启后 loss 对齐。使用集群共享路径保存代码、数据和日志；Slurm 每节点一个 `srun` task，由 `uv run python -m torch.distributed.run` 启动各 GPU worker。
 4. 接入 Vision 及 image/video fixture 后，分别验证视觉主干、跨模态输入拼接、端到端 loss/backward 与目标规模训练。
 
@@ -76,3 +76,36 @@ HF Qwen4Exp 的 hard top-k 没有 indexer 的 LM 梯度；其测试明确说明 
 - 独立 MoE EP 模块在 2×B300 NCCL 作业 `4800048` 3/3 通过，覆盖 MCore all-to-all dispatcher、局部 packed experts、router/shared 梯度、全局 aux 和分布式 checkpoint。
 - 2×B300 NCCL 作业 `4800461` 中，完整小文本模型已联合 PLE 行分片与 MoE expert parallel 完成 1/1 端到端测试：GDN/QSA/HC、变长 rank-local token、全局 CE 与 router aux、与未分片参考的逐参数梯度/更新，以及模型 DCP 加 rank-local AdamW 状态的第二步 BF16 精确重放。此实现要求 PLE 与 EP 使用同一进程组，expert TP=1；复制参数由原型训练循环显式 SUM 梯度。大规模 DDP/优化器分片及 grouped expert GEMM 尚未接入。
 - B300 作业 `4800570` 在 EP 接线后重新执行单卡 reference/TE/indexed SDPA 回归 23/23 通过；作业 `4800615` 的独立双卡 MoE 测试 3/3 通过，包含一个 rank 没有本地 token 时的 all-to-all 与梯度对照。完整文本模型仍要求训练器为每 rank 提供非空 local batch；batch=0 的全模型路径尚未验收。
+- B300 作业 `4800864` 中，Bridge 的冻结 HF image/video oracle、视觉 wrapper 与文本映射共 11/11 通过；MCore 使用持久 HF fixture 验证视觉 feature scatter、三轴位置、PLE 原始 token ID 及 CE backward 共 2/2 通过。
+- Transformer Engine fork `c4f14012` 已在 PyTorch 25.10/CUDA 13.0 镜像中针对 B300 `sm_103a` 完成原生 wheel 构建，并从隔离安装目录加载对应 `.so`。B300 作业 `4801923` 使用该原生包运行 MCore QwenAir reference/TE/indexed SDPA 回归并以 `0:0` 完成；2×B300 作业 `4801872` 将 `te_indexed_sdpa` 与 PLE+EP 完整小模型的两步 BF16/AdamW、DCP 与 optimizer restart 联合验证并以 `0:0` 完成。indexed SDPA 仍为 math backend，原生构建成功不等于生产稀疏 kernel 已实现。
+
+## 6. 距离 177B 目标训练的工程差距与下一阶段门槛
+
+以下均针对当前小模型原型，而非已通过的目标规模能力。当前 `QwenAirForCausalLM` 是整个 48 层在每个 rank 构造的 `MegatronModule`，只接受显式的 PLE/EP/ETP 进程组；`QwenAirTextConfig.validate()` 仍拒绝 TP、PP、CP、EP、ETP 的非 1 配置值。两卡 EP 测试绕过配置字段，使用同一组做 PLE 表行分片和 expert 分片，TP=PP=CP=1，训练循环手工 SUM 复制参数梯度，优化器为每 rank 普通 AdamW。这验证了数学和局部分片，不等于 MCore 多维训练入口。
+
+### 6.1 所有权、计算与内存缺口
+
+1. **并行网格与梯度所有权。** 将 QwenAir 模型接到 MCore `ProcessGroupCollection`，区分 TP、PP、CP、EP、专家 TP、普通 DP、专家 DP 和 PLE 表分片/副本组。标准 MCore DDP 以 `param.allreduce=False` 将专家权重送入专家 DP 桶；现有 QwenAir packed experts 和 PLE 表没有完成这个参数标记/桶归属，也没有接入 `DistributedDataParallel`、`finalize_model_grads` 或 `DistributedOptimizer`。EP rank 分担同一全局 loss 时，复制参数需跨 EP **SUM** 局部梯度；独立 DP 副本才做平均或等价归一化。PLE 行 shard 和 expert shard 不得沿其所有权分片组再 all-reduce。当前 `sync_ep_replicated_gradients()` 仅是单独测试辅助，不能与 DDP 重复调用。
+2. **TP。** 词嵌入/LM head、GDN 融合 QKV 和卷积、QSA Q/K/V 与输出、HC 的 4H read/injection/mixer、shared expert、router 都仍用未分片 `nn.Linear`/`nn.Embedding`。需要采用 MCore `VocabParallelEmbedding`、`ColumnParallelLinear`、`RowParallelLinear` 和 vocab-parallel CE，或具有相同前反向/检查点契约的包装；保留 HF 逻辑参数名与投影切片。目标 QSA 只有 2 个 KV head、indexer 只有 1 个 K head：TP>2 不能朴素按 head 均分 KV；需复制 KV、定义副本梯度归约，并让所有 TP rank 使用完全相同的逐 token 选择。indexer 的 4 个 Q head 若分片，其跨 head 得分和 top-k 必须先全局规约；初期可复制整个 indexer，随后再优化。GDN 的 16 QK/48 V head 及四流 HC 也要逐项核对 TP 切片。
+3. **PP 与全层损失。** 当前每 rank 创建所有层、输入 embedding 和 LM head，没有 `pre_process/post_process`、本地全局层号、`set_input_tensor` 或 MCore pipeline schedule。PP 阶段必须只拥有对应层；PLE 固定在全局第 2 层，LM head/final HC mixer 仅在末 stage。HF router aux 对 48 层和有效 token 统一计数；现有 loss 仅对本 rank 已构造层求值。PP 拆分后必须在不破坏 1F1B 微批次顺序的前提下交换可微概率和不可微计数，并保持与未切分全层 loss/梯度相同。
+4. **CP 与长序列状态。** GDN 现为逐 token Python FP32 recurrent loop，没有分块反向、activation checkpoint 或跨 CP shard 的递推状态/卷积 halo。MCore 既有 GDN 的 chunkwise/headwise CP 与 FLA kernel 可作为候选，但先要证明它与冻结 HF 的参数布局和数值一致。QSA 当前 indexer 虽按 query chunk 限制临时内存，仍扫描全部已完成块，计算量随上下文二次增长；TE `te_reference`/`te_indexed_sdpa` 仍需完整本地 K/V，后者在布尔 mask 下实测退化为 math SDPA，尚无跨 CP rank 取选中块和生产级 block-sparse backward。PLE 的 EOS-aware ngram、depthwise conv、GDN causal conv、MRoPE 位置及 next-token label 都需要 CP 边界 halo/状态。不能把标准全注意力的 CP 开关直接用于这一混合层。
+5. **专家计算与表访问。** 目前 MoE 用 MCore all-to-all dispatcher，但 `QwenAirExperts.forward_dispatched()` 对每个本地专家执行 Python 循环、`tokens_per_expert.tolist()` 和单独 GEMM；512 experts 目标下不能据此推断吞吐。应优先适配 MCore/TE `TEGroupedMLP` 或等价 grouped GEMM，并以 packed HF `[E,2I,H]`、`[E,H,I]` 的 SwiGLU 顺序做双向权重/梯度映射。PLE lookup 已可变长 all-to-all，但每次取 host split、查表通信量和真实表存储尚未压测；表的 optimizer state 还未按所有权分片。
+6. **checkpoint/Bridge。** 当前 `sharded_state_dict` 用一个进程组描述 PLE 与 expert 的 axis-0 shard，强制两者是同一 `ProcessGroup`；其他权重按复制张量记录。不同 PLE/EP/TP 组、PP 层偏移、CP/DP 副本 ID、普通/专家/表的 optimizer state 和跨拓扑 reshard 均未定义。Bridge provider 仍拒绝非单 rank TP/PP/EP/CP，DirectMapping 只支持逻辑张量的单卡往返，没有真实 128 文件 PLE 的流式装载/导出，也未启用 HF pretrained export。物理 128 文件 shard 与运行时进程组大小应独立映射。
+
+以 `model-info/p0/parameter-ledger.json` 的条件性参数清单核算：文本 176,943,899,520、vision 448,931,056，合计 177,392,830,576，尚不包括需确认训练契约的 MTP 额外参数。其中 routed experts 为 `48×512×3×640×2560 = 120,795,955,200`，PLE 表为 `320001536×160 = 51,200,245,760`，两者之外还有约 5.397B 参数（含 vision）。仅按 512-way EP/表分片，**每 rank** 仍持有 235,929,600 个 expert 参数和 100,000,480 个 PLE 参数；这已分别超过当前 100M/50M 安全阈值。按 BF16 权重、BF16 梯度和两份 FP32 Adam moment 的 12 byte/参数下界，两项本地 shard 分别约 2.64/1.12 GiB，尚未算其余权重、FP32 master、activation、临时 gather 与通信缓冲。单样本、262144 token 的一个 `[B,S,4H]` BF16 四流隐藏张量就是 5.0 GiB。PP、TP、CP、activation recompute、optimizer 分片/offload 及峰值内存实测缺一不可；仅提升配置安全阈值不解决训练内存。
+
+MCore 网格不能按 `TP×PP×CP×EP×DP` 盲目相乘：其普通模型满足 `world_size=TP×PP×CP×DP`，专家侧满足 `world_size=ETP×EP×PP×expert_DP`，EP 从既有 rank 布局中组织。每个测试先打印并核对实际 `ProcessGroupCollection` 成员、参数所有者和 loss 归一化，再运行训练。下列作业规模是最低验收配置，不表示性能达标。
+
+### 6.2 可执行开发顺序及最小 B300 验收
+
+1. **拓扑/资源清单。** 增加不分配目标权重的 177B 参数、每组每 rank 参数/梯度/Adam/激活/通信预算器；先把 QwenAir config、模型工厂和 Bridge provider 的显式并行布局、`ProcessGroupCollection` 与 fail-closed 约束接通。逐参数声明 logical shape、TP/EP/PLE 轴及副本组，定义空 local batch 的全组一致拒绝规则。验收：2×B300、tiny EP2 与目标 config 的 *dry-run*；每 rank 输出一致的网格/预算，错误拓扑在构造前报错，不尝试分配 177B。
+2. **Grouped expert 计算。** 先在现有 EP2 all-to-all 后接 MCore/TE grouped expert kernel，消除每专家 Python GEMM/host token count；为 SwiGLU packed 权重建立 HF↔kernel 逻辑映射，保留空专家/空源 rank、top-k 重复目的地和 BF16 autocast 语义。验收：2×B300，4/16 experts 的 FP32/BF16 前向、输入/权重/router 梯度对照及 DCP 重启；再 8×B300 以 64 experts/EP8 测 token 分布极不均匀、峰值显存和 profiler，确认专家计算不随本地专家数线性增长 Python launch 数。
+3. **DDP 与优化器所有权。** 标记 expert shard 走 `expt_dp`、复制参数走适当 `dp_cp`/EP SUM、PLE 表走其独立副本组；接 MCore DDP/`DistributedOptimizer`，去掉训练循环手工 `sync_ep_replicated_gradients()`。验收：4×B300，EP2 加两个专家副本的组布局；比较与当前无分片 FP32 oracle 的 global CE/router aux、每类参数梯度、两步 BF16 更新；保存模型与**分布式 optimizer state** 后换进程重启，第二步 loss、权重、optimizer 状态一致。另测某 rank 无有效 CE label 与非均匀 token 数，排除 SUM/AVERAGE 缩放错误。
+4. **PLE 独立表组与跨组 checkpoint。** 解除 PLE group 必须与 EP group 对象相同的限制，为每个表 shard、expert shard、将来的 TP 权重和普通副本构造独立 `ShardedTensor`/replica metadata；先用小表实现 group 重排与 optimizer state。验收：4×B300 构造 PLE2×EP2 不同组、非均匀 lookup，比较输出/梯度并跨相同拓扑重启；8×B300 增加 DP2 并做 2→4 table shard reshard。用合成 128 文件 manifest 验证逐片流式转换、hash、峰值内存上界；真实文件到位后逐片重测，不能把小表 DCP 当作真实权重转换。
+5. **TP 与四流。** 从 TP2 开始接 embedding/LM head、HC、GDN、QSA、router、shared expert，再处理 TP4/8 的 KV/indexer 复制和同步。每个算子保留 HF logical checkpoint 切片，先不做 CP/PP。验收：2×B300 TP2/EP1/ETP2 对单卡 tiny reference；4×B300 TP2/EP2/ETP2 对现有两卡 EP oracle，检查逐层输出、全局 top-k、梯度与 DCP；8×B300 TP4/EP2/ETP4 覆盖 2 KV heads/1 indexer K head 不可整除的目标几何及 optimizer restart。
+6. **PP 与跨层 aux。** 按全局层号切 48 层，只在首/末 stage 建 embedding/final mixer/head，把 router 统计和梯度正确带过 pipeline 微批次；嵌入第 2 层 PLE 与 GDN/QSA 周期不因 stage 边界变化。验收：4×B300 PP2/EP2/ETP1，4 或 8 层 tiny 全层 HF oracle，1F1B 两个以上 microbatch 的逐层输出、CE+全层 aux 梯度和模型+optimizer 重启；再 8×B300 TP2/PP2/EP2/ETP2 测流水线通信与 checkpoint key/offset。
+7. **长序列 kernel 与 CP。** 先把 GDN 的 causal conv+递推替为经 HF 数值/梯度验证的分块 FLA/TE 实现，把 QSA 选择器做块摘要 GEMM/在线 top-k，TE 注意力做真正 block-sparse forward/backward，避免 math SDPA fallback 与 `S²` 临时量。然后设计 CP 边界：GDN 递推状态和卷积 halo、PLE ngram/EOS/conv halo、QSA 全局 block ID/远端 K/V、位置和 label。验收：2×B300 CP2 的 GDN+QSA+PLE，小序列专门跨 EOS、4-token block、卷积边界做 FP32/BF16 输出/梯度对照与重启；再在 8×B300 上逐级测 16k→64k→262144 token 的一层 forward/backward，记录每 rank 峰值显存、吞吐、kernel 占比和无 math fallback。若目标长度单层都无法过门槛，不进入 48 层训练。
+8. **组合网格与文本规模。** 使用第 1 步确定的实际 MCore rank 布局，先 16×B300 测 TP2/PP2/CP2/DP2、EP2/ETP2/expert-DP2 与 optimizer sharding，检查与小模型基线一致，再扩至能容纳 176.944B 文本参数的多节点网格。验收：目标文本配置 BF16 连续训练多个 step，所有**已定义** loss 与参数梯度有限、无 OOM，单步预算与 profiler 可解释；跨节点保存完整模型/optimizer/RNG/data 位置后重启，下一步 loss/梯度/参数精确或在预设 BF16 容差内重放；记录扩展效率。若 indexer 独立目标或 MTP 规范仍缺失，只能称为主干 LM 训练验收，不能称为完整 QwenAir 预训练。
+9. **Vision 与完整目标。** 在文本阶段通过后接入 0.449B 参数的 vision trunk、位置/patch/merge、image/video 输入分配与文本 embedding 注入，逐层对照冻结 HF；随后在同一训练网格中验证图文/视频 batch、路由负载与 checkpoint。验收：2×B300 小图像/短视频的融合输出、loss、文本及 vision 梯度和 optimizer 重启与 HF oracle 一致；再按目标配置做多节点 177.393B 完整模型训练及跨节点恢复。独立 indexer 目标、MTP loss/共享与权重绑定须得到权威规范和 golden 后另设数值门槛；规范缺失时，即使图文主干 LM 可训练，也不宣称完整预训练收敛或目标等价。
+
+以上每步必须保存测试参数、组成员、镜像/代码 commit、Slurm job ID、各 rank 日志、tensor 对照、checkpoint manifest、峰值显存与失败首个 traceback。上游 MCore/TE 有可复用组件，但要通过 QwenAir 自身的 HF 数值和梯度门槛后才能替换当前参考实现。
