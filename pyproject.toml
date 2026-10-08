@@ -84,7 +84,7 @@ mlm = [
 
 dev = [
     "nvidia-modelopt[torch]>=0.44; sys_platform != 'darwin'",
-    "transformer-engine[pytorch,core_cu13]>=2.9.0a0,<2.12.0",
+    "transformer-engine[pytorch,core_cu13]>=2.21.0.dev0,<2.22.0",
     "nvidia-resiliency-ext==0.6.0",
     "tqdm",
     "einops~=0.8",
@@ -135,7 +135,7 @@ lts = [
 ### the LTS image build fails with "Extra `...` is not defined in the         ###
 ### project's `optional-dependencies` table".                                 ###
 te = [
-    "transformer-engine[pytorch,core_cu13]>=2.9.0a0,<2.12.0",
+    "transformer-engine[pytorch,core_cu13]>=2.21.0.dev0,<2.22.0",
 ]
 
 ssm = [
@@ -217,16 +217,17 @@ requires-dist = []
 
 [[tool.uv.dependency-metadata]]
 name = "transformer-engine"
-version = "2.14.0+f031cf87"
+version = "2.21.0.dev0+3250741d"
 requires-dist = [
-    "einops",
-    "importlib-metadata",
-    "nvdlfw-inspect",
-    "onnx",
-    "onnxscript",
+    "pydantic<2.14",
+    "importlib-metadata>=1.0",
     "packaging",
-    "pydantic",
-    "torch",
+    "torch>=2.1",
+    "einops",
+    "onnxscript",
+    "onnx",
+    "nvdlfw-inspect",
+    "nvidia-cudnn-frontend>=1.29.0",
 ]
 
 [[tool.uv.dependency-metadata]]
@@ -240,7 +241,7 @@ flash_mla = [
     { git = "https://github.com/deepseek-ai/FlashMLA", rev = "nv_dev" },
 ]
 nvidia-cudnn-frontend = { git = "https://github.com/NVIDIA/cudnn-frontend.git", rev = "develop" }
-transformer-engine = { git = "https://github.com/NVIDIA/TransformerEngine.git", rev = "f031cf87bd054c7558b887df7bed93975456667f" }
+transformer-engine = { git = "https://github.com/shangxiaokang/TransformerEngine.git", rev = "3250741db1e06acd638da6124bc193405565f771" }
 nemo-run = { git = "https://github.com/NVIDIA-NeMo/Run.git", rev = "17ae86b64d7f75653351664f5d8c9e466faede00" }
 emerging_optimizers = { git = "https://github.com/NVIDIA-NeMo/Emerging-Optimizers.git", rev = "v0.3.0" }
 fast-hadamard-transform = { git = "https://github.com/Dao-AILab/fast-hadamard-transform.git", rev = "f134af63deb2df17e1171a9ec1ea4a7d8604d5ca" }
