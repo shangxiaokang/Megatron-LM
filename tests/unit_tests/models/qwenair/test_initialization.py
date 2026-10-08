@@ -8,7 +8,7 @@ import torch
 
 from megatron.core.models.qwenair import QwenAirForCausalLM, QwenAirTextConfig
 from megatron.core.models.qwenair.initialization import initialize_qwenair_sharded_normal_
-from megatron.core.models.qwenair.layers import QwenAirExperts
+from megatron.core.models.qwenair.layers import QwenAirExperts, QwenAirTopKRouter
 from megatron.core.models.qwenair.ple import QwenAirNGramEmbedding
 
 
@@ -123,3 +123,68 @@ def test_model_initializer_preserves_logical_ple_initialization():
     )
 
     assert torch.equal(table.ngram_embedding.weight, expected)
+
+
+def test_model_initializer_randomizes_router_reproducibly():
+    """Router weights use the configured normal initializer and caller RNG seed."""
+    config = _config(
+        ple_layer_ids=[], num_experts=64, num_experts_per_tok=2, initializer_range=0.07
+    )
+
+    torch.manual_seed(29)
+    first = QwenAirForCausalLM(config)
+    torch.manual_seed(29)
+    second = QwenAirForCausalLM(config)
+    first_routers = [
+        module.weight.detach()
+        for module in first.modules()
+        if isinstance(module, QwenAirTopKRouter)
+    ]
+    second_routers = [
+        module.weight.detach()
+        for module in second.modules()
+        if isinstance(module, QwenAirTopKRouter)
+    ]
+
+    assert first_routers
+    assert len(first_routers) == len(second_routers)
+    for first_weight, second_weight in zip(first_routers, second_routers):
+        assert torch.isfinite(first_weight).all()
+        assert torch.count_nonzero(first_weight) > 0
+        assert torch.equal(first_weight, second_weight)
+        torch.testing.assert_close(
+            first_weight.float().std(unbiased=False),
+            torch.tensor(config.initializer_range),
+            rtol=0.15,
+            atol=0,
+        )
+
+
+def test_model_initializer_randomizes_gdn_conv_but_zeros_ple_conv():
+    """HF initialization uses normal GDN kernels and an all-zero PLE kernel."""
+    config = _config(
+        initializer_range=0.07, linear_num_key_heads=4, linear_num_value_heads=8
+    )
+
+    torch.manual_seed(31)
+    first = QwenAirForCausalLM(config)
+    torch.manual_seed(31)
+    second = QwenAirForCausalLM(config)
+    first_layer = first.model.layers[0]
+    second_layer = second.model.layers[0]
+    first_gdn = first_layer.linear_attn.conv1d.weight.detach()
+    second_gdn = second_layer.linear_attn.conv1d.weight.detach()
+    first_ple = first_layer.ple.conv1d.weight.detach()
+    second_ple = second_layer.ple.conv1d.weight.detach()
+
+    assert torch.isfinite(first_gdn).all()
+    assert torch.count_nonzero(first_gdn) > 0
+    assert torch.equal(first_gdn, second_gdn)
+    torch.testing.assert_close(
+        first_gdn.float().std(unbiased=False),
+        torch.tensor(config.initializer_range),
+        rtol=0.15,
+        atol=0,
+    )
+    assert torch.count_nonzero(first_ple) == 0
+    assert torch.equal(first_ple, second_ple)

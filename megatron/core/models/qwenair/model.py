@@ -19,6 +19,7 @@ from .layers import (
     QwenAirGatedDeltaNet,
     QwenAirGatedResidual,
     QwenAirSparseMoeBlock,
+    QwenAirTopKRouter,
     inject_hyper_output,
     qwenair_global_router_loss,
     qwenair_rope,
@@ -394,12 +395,24 @@ class QwenAirForCausalLM(MegatronModule):
             for module in self.modules()
             if isinstance(module, QwenAirNGramEmbedding)
         }
+        ple_convolutions = {
+            module.conv1d for module in self.modules() if isinstance(module, QwenAirPLE)
+        }
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.normal_(module.weight, std=config.initializer_range)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
+            elif isinstance(module, nn.Conv1d):
+                if module in ple_convolutions:
+                    nn.init.zeros_(module.weight)
+                else:
+                    nn.init.normal_(module.weight, std=config.initializer_range)
+                if module.bias is not None:
+                    nn.init.zeros_(module.bias)
             elif isinstance(module, nn.Embedding) and module not in ple_embeddings:
+                nn.init.normal_(module.weight, std=config.initializer_range)
+            elif isinstance(module, QwenAirTopKRouter):
                 nn.init.normal_(module.weight, std=config.initializer_range)
 
     def set_input_tensor(self, input_tensor: Tensor | list[Tensor | None] | None) -> None:
