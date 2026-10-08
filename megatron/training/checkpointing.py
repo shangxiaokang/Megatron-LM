@@ -206,6 +206,8 @@ def save_tokenizer_assets(
     tokenizer: MegatronTokenizer,
     config: TokenizerConfig,
     checkpoint_path: str,
+    *,
+    raise_on_error: bool = False,
 ) -> None:
     """Save tokenizer files below a checkpoint directory on rank zero.
 
@@ -307,6 +309,8 @@ def save_tokenizer_assets(
             else:
                 shutil.copy2(source, os.path.join(tokenizer_dir, destination_name))
     except Exception:
+        if raise_on_error:
+            raise
         logger.exception("Failed to save tokenizer files")
 
 

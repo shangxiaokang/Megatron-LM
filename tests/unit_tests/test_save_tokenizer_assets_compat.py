@@ -5,6 +5,7 @@
 from types import SimpleNamespace
 from unittest.mock import Mock
 
+import pytest
 import torch
 
 from megatron.training.checkpointing import save_tokenizer_assets
@@ -59,3 +60,17 @@ def test_huggingface_wrapper_uses_save_pretrained(tmp_path, monkeypatch):
     )
 
     inner.save_pretrained.assert_called_once_with(str(tmp_path / "tokenizer"))
+
+
+def test_requested_tokenizer_save_failure_is_raised(tmp_path, monkeypatch):
+    _single_process(monkeypatch)
+    tokenizer = Mock(spec=["save_pretrained"])
+    tokenizer.save_pretrained.side_effect = OSError("write failed")
+
+    with pytest.raises(OSError, match="write failed"):
+        save_tokenizer_assets(
+            tokenizer,
+            SimpleNamespace(tokenizer_type="HuggingFaceTokenizer"),
+            str(tmp_path),
+            raise_on_error=True,
+        )
