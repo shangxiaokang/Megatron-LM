@@ -5,6 +5,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import TYPE_CHECKING
 
 import torch
 import torch.distributed as dist
@@ -24,6 +25,9 @@ from .layers import (
 )
 from .ple import QwenAirNGramEmbedding, QwenAirPLE, qwenair_ngram_metadata
 from .qsa import QwenAirQSA
+
+if TYPE_CHECKING:
+    from megatron.core.process_groups_config import ProcessGroupCollection
 
 
 @dataclass
@@ -59,10 +63,15 @@ class QwenAirDecoderLayer(nn.Module):
             from .moe_ep import QwenAirExpertParallelBlock
 
             self.mlp = QwenAirExpertParallelBlock(config, ep_group, expert_tp_group)
-        ple_layer_index = config.ple_layer_ids.index(layer_idx + 1) if layer_idx + 1 in config.ple_layer_ids else None
+        ple_layer_index = (
+            config.ple_layer_ids.index(layer_idx + 1)
+            if layer_idx + 1 in config.ple_layer_ids
+            else None
+        )
         self.ple = (
             QwenAirPLE(config, layer_idx, ple_layer_index, ple_process_group)
-            if ple_layer_index is not None else None
+            if ple_layer_index is not None
+            else None
         )
         self.attn_hyper_connection = QwenAirGatedResidual(config)
         self.mlp_hyper_connection = QwenAirGatedResidual(config)
@@ -147,7 +156,10 @@ class QwenAirTextModel(nn.Module):
                 raise ValueError("PLE requires ple_input_ids with inputs_embeds")
         if length < 1:
             raise ValueError("QwenAir requires at least one token")
-        if self.config.qsa_backend == "dense" and length > self.config.max_reference_sequence_length:
+        if (
+            self.config.qsa_backend == "dense"
+            and length > self.config.max_reference_sequence_length
+        ):
             raise NotImplementedError(
                 "QwenAir dense selector/reference is limited to "
                 f"{self.config.max_reference_sequence_length} tokens; long-context training needs a sparse backend"
@@ -165,7 +177,9 @@ class QwenAirTextModel(nn.Module):
             raise ValueError("position_ids must match input_ids")
         if self.config.qsa_backend in ("te_reference", "te_indexed_sdpa"):
             if attention_mask is not None and not torch.all(token_mask):
-                raise NotImplementedError("TE QSA reference requires unpacked, unpadded causal sequences")
+                raise NotImplementedError(
+                    "TE QSA reference requires unpacked, unpadded causal sequences"
+                )
             visible = None
         else:
             causal = torch.ones(length, length, device=embeddings.device, dtype=torch.bool).tril()
@@ -173,7 +187,8 @@ class QwenAirTextModel(nn.Module):
         hidden = embeddings.repeat(1, 1, self.config.hc_count)
         ids_for_ple = (
             torch.where(token_mask, original_ids, self.config.eos_token_id)
-            if self.config.ple_layer_ids else original_ids
+            if self.config.ple_layer_ids
+            else original_ids
         )
         router_logits = []
         for layer in self.layers:
@@ -199,20 +214,67 @@ class QwenAirForCausalLM(MegatronModule):
         ple_process_group: dist.ProcessGroup | None = None,
         ep_group: dist.ProcessGroup | None = None,
         expert_tp_group: dist.ProcessGroup | None = None,
+        pg_collection: ProcessGroupCollection | None = None,
     ) -> None:
         super().__init__(config)
+        if pg_collection is not None:
+            if not hasattr(pg_collection, "ep") or not hasattr(pg_collection, "expt_tp"):
+                raise ValueError("QwenAir pg_collection requires ep and expt_tp groups")
+            if ep_group is not None and ep_group is not pg_collection.ep:
+                raise ValueError("QwenAir received conflicting ep_group and pg_collection.ep")
+            if expert_tp_group is not None and expert_tp_group is not pg_collection.expt_tp:
+                raise ValueError(
+                    "QwenAir received conflicting expert_tp_group and pg_collection.expt_tp"
+                )
+            if ple_process_group is not None and ple_process_group is not pg_collection.ep:
+                raise ValueError(
+                    "QwenAir received conflicting ple_process_group and pg_collection.ep"
+                )
+            ep_group = pg_collection.ep
+            expert_tp_group = pg_collection.expt_tp
+            if config.ple_layer_ids:
+                ple_process_group = pg_collection.ep
         if (ep_group is None) != (expert_tp_group is None):
             raise ValueError("QwenAir EP requires both ep_group and expert_tp_group")
+        if config.expert_model_parallel_size > 1 and ep_group is None:
+            raise ValueError("QwenAir expert_model_parallel_size > 1 requires an explicit ep_group")
+        if ep_group is not None:
+            ep_size = dist.get_world_size(ep_group)
+            if ep_size != config.expert_model_parallel_size:
+                raise ValueError(
+                    "QwenAir ep_group size must match config.expert_model_parallel_size"
+                )
+            if dist.get_world_size(expert_tp_group) != config.expert_tensor_parallel_size:
+                raise ValueError(
+                    "QwenAir expert_tp_group size must match config.expert_tensor_parallel_size"
+                )
         if config.ple_layer_ids and ep_group is not None and ple_process_group is not ep_group:
-            raise NotImplementedError("QwenAir PLE and expert sharding currently require the same process group")
+            raise NotImplementedError(
+                "QwenAir PLE and expert sharding currently require the same process group"
+            )
         self.ple_process_group = ple_process_group
         self.ep_group = ep_group
+        self.pg_collection = pg_collection
         self._check_single_rank_resources(config, ple_process_group, ep_group)
         self.model = QwenAirTextModel(config, ple_process_group, ep_group, expert_tp_group)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
+        self._mark_sharded_parameters_for_ddp()
         self._initialize_weights(config)
         if config.tie_word_embeddings:
             self.lm_head.weight = self.model.embed_tokens.weight
+
+    def _mark_sharded_parameters_for_ddp(self) -> None:
+        """Route PLE row shards through MCore's expert-DP gradient bucket.
+
+        MCore DDP uses ``parameter.allreduce=False`` for model-parallel shards
+        whose replicas reduce over ``expt_dp`` instead of the dense ``dp``
+        group.  Routed expert weights stamp this attribute in their owning
+        module; PLE row shards need the same ownership because they share the
+        QwenAir EP group.
+        """
+        for module in self.modules():
+            if isinstance(module, QwenAirNGramEmbedding) and module.group_size > 1:
+                setattr(module.ngram_embedding.weight, "allreduce", False)
 
     @staticmethod
     def _check_single_rank_resources(
@@ -239,15 +301,22 @@ class QwenAirForCausalLM(MegatronModule):
                         "QwenAir PLE needs a distributed table before target-size construction"
                     )
         expert_parameters = (
-            config.num_hidden_layers * config.num_experts * 3
-            * config.moe_intermediate_size * config.hidden_size
+            config.num_hidden_layers
+            * config.num_experts
+            * 3
+            * config.moe_intermediate_size
+            * config.hidden_size
         )
         if ep_group is not None:
             if not dist.is_initialized() or config.num_experts % dist.get_world_size(ep_group):
-                raise ValueError("QwenAir EP requires an initialized group dividing the expert count")
+                raise ValueError(
+                    "QwenAir EP requires an initialized group dividing the expert count"
+                )
             expert_parameters //= dist.get_world_size(ep_group)
         if expert_parameters > config.max_single_rank_parameters:
-            raise ValueError("QwenAir experts need distributed sharding before target-size construction")
+            raise ValueError(
+                "QwenAir experts need distributed sharding before target-size construction"
+            )
 
     def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
         """Mark PLE rows and local expert rows as axis-0 MCore shards."""
@@ -293,9 +362,7 @@ class QwenAirForCausalLM(MegatronModule):
         }
         for name, module in self.named_modules():
             if isinstance(module, QwenAirExpertParallelBlock):
-                local_shards.update((
-                    f"{name}.experts.gate_up_proj", f"{name}.experts.down_proj",
-                ))
+                local_shards.update((f"{name}.experts.gate_up_proj", f"{name}.experts.down_proj"))
         for name, parameter in self.named_parameters():
             if name in local_shards:
                 continue
@@ -327,6 +394,7 @@ class QwenAirForCausalLM(MegatronModule):
         labels: Tensor | None = None,
         output_router_logits: bool = False,
         enable_mtp: bool = False,
+        labels_are_shifted: bool = False,
         *,
         inputs_embeds: Tensor | None = None,
         ple_input_ids: Tensor | None = None,
@@ -335,19 +403,27 @@ class QwenAirForCausalLM(MegatronModule):
         if enable_mtp:
             raise NotImplementedError("QwenAir MTP training shift/loss contract is unavailable")
         hidden, router_logits = self.model(
-            input_ids, attention_mask, position_ids,
-            inputs_embeds=inputs_embeds, ple_input_ids=ple_input_ids,
+            input_ids,
+            attention_mask,
+            position_ids,
+            inputs_embeds=inputs_embeds,
+            ple_input_ids=ple_input_ids,
         )
         logits = self.lm_head(hidden)
         loss = None
         if labels is not None:
             if labels.shape != logits.shape[:2]:
                 raise ValueError("labels must match the input batch and sequence")
-            shifted_logits = logits[:, :-1].float().contiguous()
-            shifted_labels = labels[:, 1:].contiguous()
+            if labels_are_shifted:
+                shifted_logits = logits.float().contiguous()
+                shifted_labels = labels.contiguous()
+            else:
+                shifted_logits = logits[:, :-1].float().contiguous()
+                shifted_labels = labels[:, 1:].contiguous()
             loss = F.cross_entropy(
                 shifted_logits.reshape(-1, shifted_logits.shape[-1]),
-                shifted_labels.reshape(-1), ignore_index=-100,
+                shifted_labels.reshape(-1),
+                ignore_index=-100,
                 reduction="sum" if self.ep_group is not None else "mean",
             )
             if self.ep_group is not None:
@@ -360,19 +436,27 @@ class QwenAirForCausalLM(MegatronModule):
         if output_router_logits:
             if self.ep_group is None:
                 aux_loss = qwenair_global_router_loss(
-                    router_logits, self.config.num_experts, self.config.num_experts_per_tok, attention_mask
+                    router_logits,
+                    self.config.num_experts,
+                    self.config.num_experts_per_tok,
+                    attention_mask,
                 )
             else:
                 from .moe_ep import qwenair_ep_router_loss
 
                 aux_loss = qwenair_ep_router_loss(
-                    router_logits, self.config.num_experts, self.config.num_experts_per_tok,
-                    self.ep_group, attention_mask,
+                    router_logits,
+                    self.config.num_experts,
+                    self.config.num_experts_per_tok,
+                    self.ep_group,
+                    attention_mask,
                 )
             if loss is not None:
                 loss = loss + self.config.router_aux_loss_coef * aux_loss
         return QwenAirOutput(
-            logits=logits, loss=loss, aux_loss=aux_loss,
+            logits=logits,
+            loss=loss,
+            aux_loss=aux_loss,
             router_logits=router_logits if output_router_logits else None,
         )
 

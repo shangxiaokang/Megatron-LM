@@ -70,6 +70,11 @@ class QwenAirTextConfig:
     max_single_rank_ple_elements: int = 50_000_000
     max_single_rank_parameters: int = 100_000_000
     max_reference_sequence_length: int = 2048
+    # MCore DDP must not divide gradients a second time after the QwenAir
+    # trainer has normalized CE by the WORLD valid-token count and averaged
+    # router auxiliary loss across EDP. Distributed training entry points set
+    # this to True. It remains False for the standalone single-rank reference.
+    calculate_per_token_loss: bool = False
     tensor_model_parallel_size: int = 1
     pipeline_model_parallel_size: int = 1
     context_parallel_size: int = 1
@@ -82,11 +87,16 @@ class QwenAirTextConfig:
             if self.full_attention_interval <= 0:
                 raise ValueError("full_attention_interval must be positive")
             self.layer_types = [
-                "linear_attention" if (i + 1) % self.full_attention_interval else "qwen_sparse_attention"
+                (
+                    "linear_attention"
+                    if (i + 1) % self.full_attention_interval
+                    else "qwen_sparse_attention"
+                )
                 for i in range(self.num_hidden_layers)
             ]
         self.layer_types = [
-            "qwen_sparse_attention" if kind == "full_attention" else kind for kind in self.layer_types
+            "qwen_sparse_attention" if kind == "full_attention" else kind
+            for kind in self.layer_types
         ]
         self.ple_layer_ids = sorted(set(self.ple_layer_ids))
         if self.ple_embed_dim is None:
@@ -110,7 +120,9 @@ class QwenAirTextConfig:
         )
         kwargs["mrope_section"] = tuple(rope.get("mrope_section", cls.mrope_section))
         mtp = text.get("mtp") or {}
-        kwargs["mtp_num_hidden_layers"] = text.get("mtp_num_hidden_layers", mtp.get("num_hidden_layers", 0))
+        kwargs["mtp_num_hidden_layers"] = text.get(
+            "mtp_num_hidden_layers", mtp.get("num_hidden_layers", 0)
+        )
         return cls(**kwargs)
 
     def validate(self) -> None:
@@ -120,15 +132,31 @@ class QwenAirTextConfig:
         if set(self.layer_types) - {"linear_attention", "qwen_sparse_attention"}:
             raise ValueError("QwenAir supports only linear_attention and qwen_sparse_attention")
         positive = (
-            self.vocab_size, self.hidden_size, self.head_dim, self.num_attention_heads,
-            self.num_key_value_heads, self.linear_num_key_heads, self.linear_num_value_heads,
-            self.linear_key_head_dim, self.linear_value_head_dim, self.linear_conv_kernel_dim,
-            self.num_experts, self.num_experts_per_tok, self.moe_intermediate_size,
-            self.shared_expert_intermediate_size, self.hc_count, self.hc_lowrank,
-            self.indexer_n_heads, self.indexer_head_dim, self.indexer_budget,
-            self.indexer_compress_ratio, self.max_single_rank_ple_elements,
-            self.max_single_rank_parameters, self.max_reference_sequence_length,
-            self.ple_conv_kernel_size, self.ngram_vocab_size_base,
+            self.vocab_size,
+            self.hidden_size,
+            self.head_dim,
+            self.num_attention_heads,
+            self.num_key_value_heads,
+            self.linear_num_key_heads,
+            self.linear_num_value_heads,
+            self.linear_key_head_dim,
+            self.linear_value_head_dim,
+            self.linear_conv_kernel_dim,
+            self.num_experts,
+            self.num_experts_per_tok,
+            self.moe_intermediate_size,
+            self.shared_expert_intermediate_size,
+            self.hc_count,
+            self.hc_lowrank,
+            self.indexer_n_heads,
+            self.indexer_head_dim,
+            self.indexer_budget,
+            self.indexer_compress_ratio,
+            self.max_single_rank_ple_elements,
+            self.max_single_rank_parameters,
+            self.max_reference_sequence_length,
+            self.ple_conv_kernel_size,
+            self.ngram_vocab_size_base,
             self.make_ngram_vocab_size_divisible_by,
         )
         if any(value <= 0 for value in positive):
@@ -159,18 +187,35 @@ class QwenAirTextConfig:
             if self.eos_token_id is None:
                 raise ValueError("PLE requires eos_token_id")
             for layer in self.ple_layer_ids:
-                if not 1 <= layer <= self.num_hidden_layers or self.layer_types[layer - 1] != "linear_attention":
+                if (
+                    not 1 <= layer <= self.num_hidden_layers
+                    or self.layer_types[layer - 1] != "linear_attention"
+                ):
                     raise ValueError("PLE layer IDs must be one-based linear-attention layers")
         if self.mtp_num_hidden_layers not in (0, 1):
             raise ValueError("QwenAir MTP declaration permits at most one layer")
+        parallel_sizes = (
+            self.tensor_model_parallel_size,
+            self.pipeline_model_parallel_size,
+            self.context_parallel_size,
+            self.expert_model_parallel_size,
+            self.expert_tensor_parallel_size,
+        )
+        if any(size < 1 for size in parallel_sizes):
+            raise ValueError("QwenAir parallel sizes must be positive")
         if any(
-            size != 1 for size in (
-                self.tensor_model_parallel_size, self.pipeline_model_parallel_size,
-                self.context_parallel_size, self.expert_model_parallel_size,
-                self.expert_tensor_parallel_size,
+            size != 1
+            for size in (
+                self.tensor_model_parallel_size,
+                self.pipeline_model_parallel_size,
+                self.context_parallel_size,
             )
         ):
-            raise NotImplementedError("This QwenAir reference supports only TP=PP=CP=EP=ETP=1")
+            raise NotImplementedError("QwenAir currently supports TP=PP=CP=1")
+        if self.expert_tensor_parallel_size != 1:
+            raise NotImplementedError("QwenAir currently supports expert TP size one")
+        if self.num_experts % self.expert_model_parallel_size:
+            raise ValueError("QwenAir expert count must divide evenly across EP")
 
     @property
     def rotary_dim(self) -> int:

@@ -52,12 +52,14 @@ def tiny_config(**overrides):
 def test_target_config_preserves_48_layer_schedule():
     """The supplied target config maps to 36 GDN and 12 QSA layers."""
     config = QwenAirTextConfig.from_hf_dict(
-        {"text_config": {
-            "num_hidden_layers": 48,
-            "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 12,
-            "ple_layer_ids": [2],
-            "mtp_num_hidden_layers": 1,
-        }}
+        {
+            "text_config": {
+                "num_hidden_layers": 48,
+                "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 12,
+                "ple_layer_ids": [2],
+                "mtp_num_hidden_layers": 1,
+            }
+        }
     )
     assert config.layer_types.count("linear_attention") == 36
     assert config.layer_types.count("qwen_sparse_attention") == 12
@@ -112,6 +114,18 @@ def test_tiny_text_training_has_main_gradients_and_no_indexer_lm_gradient():
     assert not torch.equal(old, model.lm_head.weight)
 
 
+def test_pre_shifted_megatron_labels_match_hf_internal_shift():
+    """Accept GPTDataset next-token labels without shifting them a second time."""
+    torch.manual_seed(62)
+    model = QwenAirForCausalLM(tiny_config())
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6]])
+    hf_output = model(tokens, labels=tokens)
+    pre_shifted_labels = torch.cat((tokens[:, 1:], tokens.new_full((1, 1), -100)), dim=1)
+    megatron_output = model(tokens, labels=pre_shifted_labels, labels_are_shifted=True)
+    torch.testing.assert_close(megatron_output.logits, hf_output.logits)
+    torch.testing.assert_close(megatron_output.loss, hf_output.loss)
+
+
 def test_external_visual_embeddings_keep_original_ple_ids_and_gradients():
     """Visual scatter enters the text stream without changing PLE token history."""
     import pytest
@@ -123,8 +137,7 @@ def test_external_visual_embeddings_keep_original_ple_ids_and_gradients():
     positions = torch.arange(tokens.shape[1]).view(1, 1, -1).expand(3, 1, -1)
     direct = model(tokens, position_ids=positions, labels=tokens)
     external = model(
-        None, position_ids=positions, labels=tokens,
-        inputs_embeds=embeddings, ple_input_ids=tokens,
+        None, position_ids=positions, labels=tokens, inputs_embeds=embeddings, ple_input_ids=tokens
     )
     torch.testing.assert_close(external.logits, direct.logits)
     torch.testing.assert_close(external.loss, direct.loss)
@@ -132,8 +145,7 @@ def test_external_visual_embeddings_keep_original_ple_ids_and_gradients():
     visual_patch = torch.randn(1, 1, model.config.hidden_size, requires_grad=True)
     mixed = torch.cat((embeddings[:, :2], visual_patch, embeddings[:, 3:]), dim=1)
     visual = model(
-        None, position_ids=positions, labels=tokens,
-        inputs_embeds=mixed, ple_input_ids=tokens,
+        None, position_ids=positions, labels=tokens, inputs_embeds=mixed, ple_input_ids=tokens
     )
     visual.loss.backward()
     assert visual_patch.grad is not None and torch.count_nonzero(visual_patch.grad)
@@ -261,8 +273,10 @@ def test_te_reference_can_exceed_dense_mask_limit_without_square_selection(backe
 
     torch.manual_seed(44)
     config = tiny_config(
-        indexer_budget=8, indexer_compress_ratio=4,
-        qsa_backend=backend, max_reference_sequence_length=5,
+        indexer_budget=8,
+        indexer_compress_ratio=4,
+        qsa_backend=backend,
+        max_reference_sequence_length=5,
     )
     model = QwenAirForCausalLM(config)
     tokens = torch.arange(1, 14).unsqueeze(0)
@@ -346,9 +360,11 @@ def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast(backend):
 
     torch.manual_seed(24)
     dense = QwenAirQSA(tiny_config(indexer_compress_ratio=4, indexer_budget=8), 1).cuda().bfloat16()
-    te = QwenAirQSA(
-        tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend=backend), 1
-    ).cuda().bfloat16()
+    te = (
+        QwenAirQSA(tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend=backend), 1)
+        .cuda()
+        .bfloat16()
+    )
     te.load_state_dict(dense.state_dict(), strict=True)
     dense_input = torch.randn(1, 13, 16, device="cuda", dtype=torch.bfloat16, requires_grad=True)
     te_input = dense_input.detach().clone().requires_grad_()
@@ -450,33 +466,58 @@ def test_target_ple_hash_matches_frozen_static_oracle_without_allocating_table()
     multipliers, sizes, offsets, rows = qwenair_ngram_metadata(config)
     assert multipliers.tolist() == [23703573157769, 20109073645365, 8052911324071]
     assert sizes.tolist() == [
-        20000003, 20000023, 20000033, 20000047,
-        20000059, 20000063, 20000069, 20000077,
-        20000081, 20000093, 20000107, 20000147,
-        20000153, 20000159, 20000161, 20000171,
+        20000003,
+        20000023,
+        20000033,
+        20000047,
+        20000059,
+        20000063,
+        20000069,
+        20000077,
+        20000081,
+        20000093,
+        20000107,
+        20000147,
+        20000153,
+        20000159,
+        20000161,
+        20000171,
     ]
     assert offsets.tolist() == [
-        0, 20000003, 40000026, 60000059,
-        80000106, 100000165, 120000228, 140000297,
-        160000374, 180000455, 200000548, 220000655,
-        240000802, 260000955, 280001114, 300001275,
+        0,
+        20000003,
+        40000026,
+        60000059,
+        80000106,
+        100000165,
+        120000228,
+        140000297,
+        160000374,
+        180000455,
+        200000548,
+        220000655,
+        240000802,
+        260000955,
+        280001114,
+        300001275,
     ]
     assert rows == 320001536
-    input_ids = torch.tensor([
-        [1, 2, 3, 248044, 4, 5],
-        [248044, 7, 248044, 8, 9, 10],
-    ])
+    input_ids = torch.tensor([[1, 2, 3, 248044, 4, 5], [248044, 7, 248044, 8, 9, 10]])
     indices = qwenair_ngram_indices(config, input_ids)
     assert indices.shape == (2, 6, 16)
-    packed = b"".join(value.to_bytes(8, "little", signed=True) for value in indices.flatten().tolist())
-    assert hashlib.sha256(packed).hexdigest() == "703516065311838305f34db5071c69e18fd29f9a5e972d5576c29c305fae7235"
+    packed = b"".join(
+        value.to_bytes(8, "little", signed=True) for value in indices.flatten().tolist()
+    )
+    assert (
+        hashlib.sha256(packed).hexdigest()
+        == "703516065311838305f34db5071c69e18fd29f9a5e972d5576c29c305fae7235"
+    )
 
 
 def test_target_text_parameter_count_matches_static_oracle_on_meta():
     """Build all 48 logical layers without materializing the 95 GiB PLE table."""
     config = QwenAirTextConfig(
-        max_single_rank_ple_elements=10**12,
-        max_single_rank_parameters=10**12,
+        max_single_rank_ple_elements=10**12, max_single_rank_parameters=10**12
     )
     with torch.device("meta"):
         model = QwenAirForCausalLM(config)
