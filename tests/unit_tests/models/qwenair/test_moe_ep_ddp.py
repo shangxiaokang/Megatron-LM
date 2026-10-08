@@ -91,6 +91,8 @@ def _worker(rank: int, port: int) -> None:
                 num_layers=1,
                 hidden_size=16,
                 num_attention_heads=2,
+                num_moe_experts=4,
+                moe_ffn_hidden_size=8,
                 expert_model_parallel_size=2,
             ),
             DistributedDataParallelConfig(overlap_grad_reduce=False),
