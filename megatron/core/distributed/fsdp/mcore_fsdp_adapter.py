@@ -510,6 +510,25 @@ class FullyShardedDataParallel(_BaseDataParallel):
         _load_rng_state_dict(broadcast_list[0])
 
 
+# Newer Megatron-Bridge releases distinguish the original Megatron FSDP
+# adapter from the independently implemented v2 adapter by name.  This branch
+# predates v2, but Bridge still imports both types when it uses ordinary DDP.
+# Preserve the original public name, expose its versioned alias, and keep v2
+# fail-closed instead of silently selecting the v1 implementation.
+FullyShardedDataParallelV1 = FullyShardedDataParallel
+
+
+class FullyShardedDataParallelV2(FullyShardedDataParallel):
+    """Unavailable MFSDP v2 adapter exposed for Bridge import compatibility."""
+
+    def __init__(self, *args, **kwargs):
+        del args, kwargs
+        raise NotImplementedError(
+            "Megatron FSDP v2 is unavailable in this MCore baseline; "
+            "use DistributedDataParallel, Torch FSDP2, or Megatron FSDP v1"
+        )
+
+
 def _get_hsdp_tp_mesh(outer_fsdp_dp_group, dp_cp_group, tp_group, ep_size=1):
     assert HAVE_EINOPS, "einops is not installed. Please install it with `pip install einops`."
     world_size = dist.get_world_size()
