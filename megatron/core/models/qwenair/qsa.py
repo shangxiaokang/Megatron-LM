@@ -17,9 +17,9 @@ from .layers import QwenAirRMSNorm, apply_qwenair_rope
 
 @dataclass
 class QwenAirQSASelection:
-    """Per-token QSA choice and the corresponding dense attention mask."""
+    """Per-token QSA choice, with an optional dense correctness mask."""
 
-    token_mask: Tensor
+    token_mask: Tensor | None
     block_starts: Tensor
     tail_tokens: Tensor
 
@@ -42,7 +42,7 @@ class QwenAirQSAIndexer(nn.Module):
         self.q_layernorm = QwenAirRMSNorm(self.index_head_dim, config.rms_norm_eps)
         self.k_layernorm = QwenAirRMSNorm(self.index_head_dim, config.rms_norm_eps)
 
-    def forward(self, hidden: Tensor, cos: Tensor, sin: Tensor, visible: Tensor) -> QwenAirQSASelection:
+    def forward(self, hidden: Tensor, cos: Tensor, sin: Tensor, visible: Tensor | None) -> QwenAirQSASelection:
         """Return an exact per-query selection for prefill/training.
 
         ``block_starts`` has shape [B,S,K] and stores the first physical token
@@ -52,7 +52,7 @@ class QwenAirQSAIndexer(nn.Module):
         represent these choices without changing the mask.
         """
         batch, length, _ = hidden.shape
-        if visible.shape != (batch, length, length) or visible.dtype != torch.bool:
+        if visible is not None and (visible.shape != (batch, length, length) or visible.dtype != torch.bool):
             raise ValueError("visible must be a boolean [batch, seq, seq] causal mask")
         projected = self.index_qk_proj(hidden)
         q_width = self.index_n_heads * self.index_head_dim
@@ -60,6 +60,9 @@ class QwenAirQSAIndexer(nn.Module):
         q = q.unflatten(-1, (self.index_n_heads, self.index_head_dim))
         raw_keys = raw_keys.unflatten(-1, (self.index_kv_heads, self.index_head_dim)).squeeze(2)
         q = apply_qwenair_rope(self.q_layernorm(q), cos, sin)
+
+        if visible is None:
+            return self._select_unpadded(q, raw_keys, cos, sin)
 
         max_blocks = min(self.block_topk, math.ceil(length / self.compress_ratio))
         block_starts = torch.full((batch, length, max_blocks), -1, dtype=torch.int32, device=hidden.device)
@@ -92,6 +95,61 @@ class QwenAirQSAIndexer(nn.Module):
                     tail_tokens[batch_idx, query_idx, : tail.numel()] = tail.int()
                     selected_mask[batch_idx, query_idx, tail] = True
         return QwenAirQSASelection(selected_mask, block_starts, tail_tokens)
+
+    def _select_unpadded(self, q: Tensor, raw_keys: Tensor, cos: Tensor, sin: Tensor) -> QwenAirQSASelection:
+        """Select blocks in bounded query chunks without a sequence-square mask.
+
+        This is for unpacked, unpadded causal self-attention. Full block keys
+        are pooled once per layer, then a small query chunk scores all completed
+        blocks. The resulting index tensor is [B,S,K], so temporary score
+        storage is bounded by the chunk size rather than S squared. Arithmetic
+        remains quadratic in S; a production long-context indexer needs a more
+        efficient candidate-generation kernel.
+        """
+        batch, length, _, _ = q.shape
+        ratio = self.compress_ratio
+        full_blocks = length // ratio
+        max_blocks = min(self.block_topk, math.ceil(length / ratio))
+        block_starts = torch.full((batch, length, max_blocks), -1, dtype=torch.int32, device=q.device)
+        offsets = torch.arange(ratio - 1, device=q.device)
+        positions = torch.arange(length, device=q.device)
+        tail_lengths = (positions + 1) % ratio
+        tails = (positions // ratio)[:, None] * ratio + offsets
+        tails = torch.where(offsets[None, :] < tail_lengths[:, None], tails, -1)
+        tail_tokens = tails.to(torch.int32).unsqueeze(0).expand(batch, -1, -1).contiguous()
+        if full_blocks == 0:
+            return QwenAirQSASelection(None, block_starts, tail_tokens)
+
+        pooled = raw_keys[:, : full_blocks * ratio].reshape(
+            batch, full_blocks, ratio, self.index_head_dim
+        )
+        pooled = pooled.float().mean(dim=2).to(raw_keys.dtype)
+        keys = self.k_layernorm(pooled).unsqueeze(2)
+        keys = apply_qwenair_rope(
+            keys, cos[:, : full_blocks * ratio : ratio], sin[:, : full_blocks * ratio : ratio]
+        ).squeeze(2)
+        keys_float = keys.float()
+        for start in range(0, length, 16):
+            end = min(start + 16, length)
+            with torch.autocast(device_type=q.device.type, enabled=False):
+                scores = torch.einsum("bchd,bnd->bchn", q[:, start:end].float(), keys_float)
+                scores = torch.relu(scores).sum(dim=2) / math.sqrt(self.index_head_dim)
+            local_start = 0
+            while start + local_start < end:
+                complete = (start + local_start + 1) // ratio
+                group_end = min(end, (complete + 1) * ratio - 1)
+                local_end = group_end - start
+                if complete:
+                    chosen_count = min(self.block_topk, complete)
+                    # topk's tie behavior depends on its input length. Match
+                    # the frozen per-query reference by slicing the completed
+                    # prefix before topk, rather than masking future blocks.
+                    chosen = scores[:, local_start:local_end, :complete].topk(chosen_count, dim=-1).indices
+                    block_starts[:, start + local_start : group_end, :chosen_count] = (chosen * ratio).to(
+                        torch.int32
+                    )
+                local_start = local_end
+        return QwenAirQSASelection(None, block_starts, tail_tokens)
 
 
 def qsa_dense_attention(
@@ -155,7 +213,7 @@ class QwenAirQSA(nn.Module):
         self.k_norm = QwenAirRMSNorm(self.head_dim, config.rms_norm_eps)
         self.indexer = QwenAirQSAIndexer(config, layer_idx)
 
-    def forward(self, hidden: Tensor, cos: Tensor, sin: Tensor, visible: Tensor) -> Tensor:
+    def forward(self, hidden: Tensor, cos: Tensor, sin: Tensor, visible: Tensor | None) -> Tensor:
         """Compute selected full attention and its sigmoid output gate."""
         if (
             hidden.is_cuda
@@ -176,25 +234,33 @@ class QwenAirQSA(nn.Module):
             self.k_norm(self.k_proj(hidden).reshape(batch, length, self.num_kv_heads, self.head_dim)), cos, sin
         )
         value = self.v_proj(hidden).reshape(batch, length, self.num_kv_heads, self.head_dim)
-        if self.backend == "te_reference":
+        if self.backend in ("te_reference", "te_indexed_sdpa"):
             if self.compress_ratio != 4:
                 raise NotImplementedError("TE QSA reference requires four-token compression")
             if self.training and self.attention_dropout:
                 raise NotImplementedError("TE QSA reference does not support attention dropout")
             if query.dtype not in (torch.bfloat16, torch.float32):
                 raise NotImplementedError("TE QSA reference requires BF16 or FP32 inputs")
-            full_causal = torch.ones(length, length, dtype=torch.bool, device=hidden.device).tril()
-            if not torch.equal(visible, full_causal.unsqueeze(0).expand(batch, -1, -1)):
-                raise NotImplementedError("TE QSA reference requires unpacked, unpadded causal sequences")
+            if visible is not None:
+                full_causal = torch.ones(length, length, dtype=torch.bool, device=hidden.device).tril()
+                if not torch.equal(visible, full_causal.unsqueeze(0).expand(batch, -1, -1)):
+                    raise NotImplementedError("TE QSA reference requires unpacked, unpadded causal sequences")
             valid = selected.block_starts >= 0
             if torch.any(valid & (selected.block_starts % 4 != 0)):
                 raise NotImplementedError("TE QSA reference requires physical four-token block alignment")
             selected_blocks = torch.where(valid, selected.block_starts // 4, -1)
             try:
-                from transformer_engine.pytorch import qsa_block_sparse_attention
+                if self.backend == "te_indexed_sdpa":
+                    from transformer_engine.pytorch import (
+                        qsa_indexed_sdpa_attention as attention_op,
+                    )
+                else:
+                    from transformer_engine.pytorch import (
+                        qsa_block_sparse_attention as attention_op,
+                    )
             except ImportError as error:
                 raise ImportError(
-                    "Install the QwenAir Transformer Engine reference for qsa_backend='te_reference'"
+                    f"Install the QwenAir Transformer Engine attention API for qsa_backend={self.backend!r}"
                 ) from error
             if value.dtype != query.dtype:
                 # With FP32 weights under BF16 autocast, RoPE's FP32 cos/sin
@@ -207,10 +273,12 @@ class QwenAirQSA(nn.Module):
                     raise TypeError(
                         "TE QSA requires matching Q/K/V dtypes after exact BF16 V promotion"
                     )
-            output = qsa_block_sparse_attention(
+            output = attention_op(
                 query, key, value, selected_blocks, scale=self.head_dim**-0.5
             )
         else:
+            if selected.token_mask is None:
+                raise ValueError("Dense QSA requires an explicit selected token mask")
             output = qsa_dense_attention(
                 query, key, value, selected.token_mask,
                 scale=self.head_dim**-0.5,

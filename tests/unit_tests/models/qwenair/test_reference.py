@@ -2,6 +2,7 @@
 
 """QwenAir text topology, selection, and differentiable training tests."""
 
+import pytest
 import torch
 
 from megatron.core.models.qwenair import QwenAirForCausalLM, QwenAirTextConfig
@@ -111,6 +112,37 @@ def test_tiny_text_training_has_main_gradients_and_no_indexer_lm_gradient():
     assert not torch.equal(old, model.lm_head.weight)
 
 
+def test_external_visual_embeddings_keep_original_ple_ids_and_gradients():
+    """Visual scatter enters the text stream without changing PLE token history."""
+    import pytest
+
+    torch.manual_seed(61)
+    model = QwenAirForCausalLM(tiny_config())
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6]])
+    embeddings = model.model.embed_tokens(tokens).detach()
+    positions = torch.arange(tokens.shape[1]).view(1, 1, -1).expand(3, 1, -1)
+    direct = model(tokens, position_ids=positions, labels=tokens)
+    external = model(
+        None, position_ids=positions, labels=tokens,
+        inputs_embeds=embeddings, ple_input_ids=tokens,
+    )
+    torch.testing.assert_close(external.logits, direct.logits)
+    torch.testing.assert_close(external.loss, direct.loss)
+
+    visual_patch = torch.randn(1, 1, model.config.hidden_size, requires_grad=True)
+    mixed = torch.cat((embeddings[:, :2], visual_patch, embeddings[:, 3:]), dim=1)
+    visual = model(
+        None, position_ids=positions, labels=tokens,
+        inputs_embeds=mixed, ple_input_ids=tokens,
+    )
+    visual.loss.backward()
+    assert visual_patch.grad is not None and torch.count_nonzero(visual_patch.grad)
+    with pytest.raises(ValueError, match="exactly one"):
+        model(tokens, inputs_embeds=embeddings)
+    with pytest.raises(ValueError, match="ple_input_ids"):
+        model(None, inputs_embeds=embeddings)
+
+
 def test_tiny_text_training_with_cuda_bf16_autocast():
     """Routed expert accumulation keeps the residual dtype under BF16 autocast."""
     import pytest
@@ -190,6 +222,63 @@ def test_qsa_left_padding_and_short_context_keep_all_visible_tokens():
     torch.testing.assert_close(selected.token_mask, visible)
 
 
+def test_chunked_unpadded_qsa_indexer_matches_dense_selection():
+    """Streaming query chunks retain the frozen per-token block and tail choices."""
+    from megatron.core.models.qwenair.layers import qwenair_rope
+    from megatron.core.models.qwenair.qsa import QwenAirQSAIndexer
+
+    torch.manual_seed(43)
+    config = tiny_config(indexer_budget=8, indexer_compress_ratio=4)
+    indexer = QwenAirQSAIndexer(config, 1)
+    hidden = torch.randn(2, 27, config.hidden_size)
+    positions = torch.arange(27).expand(2, -1)
+    cos, sin = qwenair_rope(config, positions, torch.float32)
+    visible = torch.ones(27, 27, dtype=torch.bool).tril().expand(2, -1, -1)
+    dense = indexer(hidden, cos, sin, visible)
+    chunked = indexer(hidden, cos, sin, None)
+    assert chunked.token_mask is None
+    torch.testing.assert_close(chunked.tail_tokens, dense.tail_tokens)
+    torch.testing.assert_close(chunked.block_starts, dense.block_starts)
+
+    # All-zero scores force top-k ties at every completed-block boundary.
+    for length in (1, 3, 4, 7, 8, 15, 16, 17, 31):
+        tied_hidden = torch.zeros(2, length, config.hidden_size)
+        tied_positions = torch.arange(length).expand(2, -1)
+        tied_cos, tied_sin = qwenair_rope(config, tied_positions, torch.float32)
+        tied_visible = torch.ones(length, length, dtype=torch.bool).tril().expand(2, -1, -1)
+        dense_ties = indexer(tied_hidden, tied_cos, tied_sin, tied_visible)
+        chunked_ties = indexer(tied_hidden, tied_cos, tied_sin, None)
+        torch.testing.assert_close(chunked_ties.block_starts, dense_ties.block_starts)
+        torch.testing.assert_close(chunked_ties.tail_tokens, dense_ties.tail_tokens)
+
+
+@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa"])
+def test_te_reference_can_exceed_dense_mask_limit_without_square_selection(backend):
+    """An unpacked TE sequence uses only selected block indices and tail tokens."""
+    pytest.importorskip("transformer_engine.pytorch")
+    from megatron.core.models.qwenair.layers import qwenair_rope
+    from megatron.core.models.qwenair.qsa import QwenAirQSA
+
+    torch.manual_seed(44)
+    config = tiny_config(
+        indexer_budget=8, indexer_compress_ratio=4,
+        qsa_backend=backend, max_reference_sequence_length=5,
+    )
+    model = QwenAirForCausalLM(config)
+    tokens = torch.arange(1, 14).unsqueeze(0)
+    output = model(tokens, labels=tokens)
+    assert torch.isfinite(output.loss)
+    output.loss.backward()
+    qsa = model.model.layers[1].self_attn
+    hidden = torch.randn(1, 13, config.hidden_size)
+    cos, sin = qwenair_rope(config, torch.arange(13).unsqueeze(0), torch.float32)
+    chunked = qsa.indexer(hidden, cos, sin, None)
+    assert chunked.token_mask is None
+    assert chunked.block_starts.shape[:2] == (1, 13)
+    with pytest.raises(NotImplementedError, match="unpadded"):
+        qsa(hidden, cos, sin, torch.zeros(1, 13, 13, dtype=torch.bool))
+
+
 def test_left_padding_cannot_change_valid_ple_outputs_and_four_axis_rope():
     """Masked PLE history uses EOS, and Qwen's text axis stays out of MRoPE."""
     from megatron.core.models.qwenair.layers import qwenair_rope
@@ -211,17 +300,16 @@ def test_left_padding_cannot_change_valid_ple_outputs_and_four_axis_rope():
     torch.testing.assert_close((base_cos, base_sin), (four_cos, four_sin))
 
 
-def test_qsa_te_reference_matches_dense_outputs_and_gradients():
+@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa"])
+def test_qsa_te_reference_matches_dense_outputs_and_gradients(backend):
     """A per-token four-key-block TE selection preserves dense QSA training math."""
-    import pytest
-
     pytest.importorskip("transformer_engine.pytorch")
     from megatron.core.models.qwenair.layers import qwenair_rope
     from megatron.core.models.qwenair.qsa import QwenAirQSA
 
     torch.manual_seed(13)
     dense_config = tiny_config(indexer_compress_ratio=4, indexer_budget=8)
-    te_config = tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend="te_reference")
+    te_config = tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend=backend)
     dense = QwenAirQSA(dense_config, 1)
     te = QwenAirQSA(te_config, 1)
     te.load_state_dict(dense.state_dict(), strict=True)
@@ -247,10 +335,9 @@ def test_qsa_te_reference_matches_dense_outputs_and_gradients():
         te(te_input, cos, sin, padded)
 
 
-def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast():
+@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa"])
+def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast(backend):
     """FP32 score accumulation survives CUDA autocast in both QSA paths."""
-    import pytest
-
     pytest.importorskip("transformer_engine.pytorch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required for the BF16 autocast comparison")
@@ -260,7 +347,7 @@ def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast():
     torch.manual_seed(24)
     dense = QwenAirQSA(tiny_config(indexer_compress_ratio=4, indexer_budget=8), 1).cuda().bfloat16()
     te = QwenAirQSA(
-        tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend="te_reference"), 1
+        tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend=backend), 1
     ).cuda().bfloat16()
     te.load_state_dict(dense.state_dict(), strict=True)
     dense_input = torch.randn(1, 13, 16, device="cuda", dtype=torch.bfloat16, requires_grad=True)
@@ -288,17 +375,16 @@ def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast():
         torch.backends.cuda.matmul.allow_tf32 = old_tf32
 
 
-def test_full_text_te_reference_trains_with_fp32_weights_and_bf16_autocast():
+@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa"])
+def test_full_text_te_reference_trains_with_fp32_weights_and_bf16_autocast(backend):
     """RoPE-promoted FP32 Q/K and BF16 V keep exact TE input dtype handling."""
-    import pytest
-
     pytest.importorskip("transformer_engine.pytorch")
     if not torch.cuda.is_available():
         pytest.skip("CUDA is required for the mixed precision TE integration")
     torch.manual_seed(25)
     dense = QwenAirForCausalLM(tiny_config(indexer_compress_ratio=4, indexer_budget=8)).cuda()
     te = QwenAirForCausalLM(
-        tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend="te_reference")
+        tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend=backend)
     ).cuda()
     te.load_state_dict(dense.state_dict(), strict=True)
     tokens = torch.arange(1, 14, device="cuda").unsqueeze(0)

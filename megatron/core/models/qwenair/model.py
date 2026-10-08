@@ -63,14 +63,16 @@ class QwenAirDecoderLayer(nn.Module):
     def forward(
         self,
         hidden: Tensor,
-        input_ids: Tensor,
+        input_ids: Tensor | None,
         cos: Tensor,
         sin: Tensor,
-        visible: Tensor,
+        visible: Tensor | None,
         token_mask: Tensor,
     ) -> tuple[Tensor, Tensor]:
         """Apply PLE, attention, experts, and both stream injections."""
         if self.ple is not None:
+            if input_ids is None:
+                raise ValueError("PLE requires the original token IDs")
             hidden = hidden + self.ple(hidden, input_ids, token_mask)
         read, original, injection = self.attn_hyper_connection(hidden)
         if self.layer_type == "linear_attention":
@@ -100,42 +102,71 @@ class QwenAirTextModel(nn.Module):
 
     def forward(
         self,
-        input_ids: Tensor,
+        input_ids: Tensor | None = None,
         attention_mask: Tensor | None = None,
         position_ids: Tensor | None = None,
+        *,
+        inputs_embeds: Tensor | None = None,
+        ple_input_ids: Tensor | None = None,
     ) -> tuple[Tensor, tuple[Tensor, ...]]:
-        """Return contracted hidden states and per-layer raw router logits."""
-        if input_ids.ndim != 2:
-            raise ValueError("input_ids must have shape [batch, sequence]")
-        batch, length = input_ids.shape
+        """Return hidden states; embeddings may contain scattered visual features.
+
+        ``ple_input_ids`` carries the original token stream used for n-gram
+        hashing when visual embeddings replace token embeddings at some slots.
+        """
+        if (input_ids is None) == (inputs_embeds is None):
+            raise ValueError("Provide exactly one of input_ids or inputs_embeds")
+        if input_ids is not None:
+            if input_ids.ndim != 2:
+                raise ValueError("input_ids must have shape [batch, sequence]")
+            if ple_input_ids is not None:
+                raise ValueError("ple_input_ids is only used with inputs_embeds")
+            batch, length = input_ids.shape
+            embeddings = self.embed_tokens(input_ids)
+            original_ids = input_ids
+        else:
+            if inputs_embeds.ndim != 3 or inputs_embeds.shape[-1] != self.config.hidden_size:
+                raise ValueError("inputs_embeds must have shape [batch, sequence, hidden_size]")
+            batch, length, _ = inputs_embeds.shape
+            embeddings = inputs_embeds
+            original_ids = ple_input_ids
+            if original_ids is not None and original_ids.shape != (batch, length):
+                raise ValueError("ple_input_ids must have shape [batch, sequence]")
+            if self.config.ple_layer_ids and original_ids is None:
+                raise ValueError("PLE requires ple_input_ids with inputs_embeds")
         if length < 1:
             raise ValueError("QwenAir requires at least one token")
-        if length > self.config.max_reference_sequence_length:
+        if self.config.qsa_backend == "dense" and length > self.config.max_reference_sequence_length:
             raise NotImplementedError(
                 "QwenAir dense selector/reference is limited to "
                 f"{self.config.max_reference_sequence_length} tokens; long-context training needs a sparse backend"
             )
         if attention_mask is None:
-            token_mask = torch.ones_like(input_ids, dtype=torch.bool)
+            token_mask = torch.ones((batch, length), device=embeddings.device, dtype=torch.bool)
         else:
-            if attention_mask.shape != input_ids.shape:
+            if attention_mask.shape != (batch, length):
                 raise ValueError("attention_mask must have shape [batch, sequence]")
             token_mask = attention_mask.bool()
         if position_ids is None:
-            position_ids = torch.arange(length, device=input_ids.device).expand(batch, -1)
+            position_ids = torch.arange(length, device=embeddings.device).expand(batch, -1)
         cos, sin = qwenair_rope(self.config, position_ids, self.embed_tokens.weight.dtype)
         if cos.shape[:2] != (batch, length):
             raise ValueError("position_ids must match input_ids")
-        causal = torch.ones(length, length, device=input_ids.device, dtype=torch.bool).tril()
-        visible = causal.unsqueeze(0) & token_mask[:, :, None] & token_mask[:, None, :]
-        hidden = self.embed_tokens(input_ids).repeat(1, 1, self.config.hc_count)
-        ple_input_ids = (
-            torch.where(token_mask, input_ids, self.config.eos_token_id)
-            if self.config.ple_layer_ids else input_ids
+        if self.config.qsa_backend in ("te_reference", "te_indexed_sdpa"):
+            if attention_mask is not None and not torch.all(token_mask):
+                raise NotImplementedError("TE QSA reference requires unpacked, unpadded causal sequences")
+            visible = None
+        else:
+            causal = torch.ones(length, length, device=embeddings.device, dtype=torch.bool).tril()
+            visible = causal.unsqueeze(0) & token_mask[:, :, None] & token_mask[:, None, :]
+        hidden = embeddings.repeat(1, 1, self.config.hc_count)
+        ids_for_ple = (
+            torch.where(token_mask, original_ids, self.config.eos_token_id)
+            if self.config.ple_layer_ids else original_ids
         )
         router_logits = []
         for layer in self.layers:
-            hidden, logits = layer(hidden, ple_input_ids, cos, sin, visible, token_mask)
+            hidden, logits = layer(hidden, ids_for_ple, cos, sin, visible, token_mask)
             router_logits.append(logits)
         contracted = self.hyper_connection_mixer(hidden)
         return contracted, tuple(router_logits)
@@ -224,22 +255,28 @@ class QwenAirForCausalLM(MegatronModule):
 
     def forward(
         self,
-        input_ids: Tensor,
+        input_ids: Tensor | None = None,
         attention_mask: Tensor | None = None,
         position_ids: Tensor | None = None,
         labels: Tensor | None = None,
         output_router_logits: bool = False,
         enable_mtp: bool = False,
+        *,
+        inputs_embeds: Tensor | None = None,
+        ple_input_ids: Tensor | None = None,
     ) -> QwenAirOutput:
         """Compute next-token CE and optional Qwen cross-layer MoE auxiliary loss."""
         if enable_mtp:
             raise NotImplementedError("QwenAir MTP training shift/loss contract is unavailable")
-        hidden, router_logits = self.model(input_ids, attention_mask, position_ids)
+        hidden, router_logits = self.model(
+            input_ids, attention_mask, position_ids,
+            inputs_embeds=inputs_embeds, ple_input_ids=ple_input_ids,
+        )
         logits = self.lm_head(hidden)
         loss = None
         if labels is not None:
-            if labels.shape != input_ids.shape:
-                raise ValueError("labels must match input_ids")
+            if labels.shape != logits.shape[:2]:
+                raise ValueError("labels must match the input batch and sequence")
             shifted_logits = logits[:, :-1].float().contiguous()
             shifted_labels = labels[:, 1:].contiguous()
             loss = F.cross_entropy(

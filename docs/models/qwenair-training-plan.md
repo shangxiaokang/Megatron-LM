@@ -39,7 +39,7 @@ Bridge 负责配置注册、模型实例化与 checkpoint 双向转换；本工�
 
 ### B. 稀疏注意力训练与 B200/B300 功能验证
 
-1. TE 先实现逐 token 选块、causal、GQA 的可微稀疏功能路径，用同一索引对稠密 masked oracle 检查输出和 dQ/dK/dV。query chunk 只限制 TE gather 的临时空间；当前 MCore 选择器仍构造 `[S,S]` 可见/选择 mask，必须在生产阶段改为流式或分块索引生成。
+1. TE 先实现逐 token 选块、causal、GQA 的可微稀疏功能路径，用同一索引对稠密 masked oracle 检查输出和 dQ/dK/dV。MCore 的无 padding TE 路径已改为按 query chunk 生成索引，不再分配 `[S,S]` 选择 mask；目前每个已完成块的 query 组仍单独调用 top-k，计算量和 kernel launch 数随上下文二次/线性上升，目标长度必须另做融合候选生成与 top-k kernel。
 2. 在 B200/B300 上测单卡 BF16 forward、backward、优化器步骤，记录 torch/CUDA/cuDNN/NCCL/TE/FLA 版本、GPU 名称、commit 和日志。比较稀疏路径与稠密参考，覆盖短序列、块边界、尾 token、左 padding、top-k ties 和长序列内存。
 3. 生产 kernel 需要实际 block-sparse forward/backward 和长上下文显存/吞吐门槛；纯 PyTorch gather 路径仅用于功能验证。只有性能、数值与梯度同时通过，才设为目标训练默认路径。
 
@@ -68,3 +68,5 @@ HF Qwen4Exp 的 hard top-k 没有 indexer 的 LM 梯度；其测试明确说明 
 - 该集群镜像中的 TE 原生扩展早于本次 TE fork；联调通过绝对路径加载新的纯 Python QSA 函数并注入镜像内已安装的 TE 包。必须用匹配的扩展重建或更新镜像，才能称为 TE fork 整包验证。
 - B300 双卡作业 `4799432` 中，PLE 2-rank 的变长查表、反向以及 MCore 分布式 checkpoint 实际写入/恢复 2/2 通过；CPU Gloo 对照亦通过。当前仅 PLE 表按行分片，专家并行、长上下文选择器与完整多模态训练尚未实现。
 - 新的 TE indexed SDPA 路径在 B300 上 51/51 定向用例通过，但 profiler 显示布尔选择 mask 令它回退到 PyTorch math SDPA，强制 FlashAttention 会拒绝非空 mask。因此该路径是功能验证方案，尚无目标上下文长度的吞吐/显存验收，不能作为生产稀疏 kernel。
+- B300 作业 `4800005` 对流式无 padding QSA 选择器、超出 dense 限额的 TE 路径及完整小文本 TE 训练共 3 项通过；作业 `4800095` 对 MCore 的 dense、TE gather 与 indexed SDPA 接线、视觉 `inputs_embeds`/原始 PLE ID 接口等 23 项 reference 回归通过。`te_indexed_sdpa` 仍需动态注入当前 TE fork 的 Python API，且实际 SDPA 后端为 math。
+- 独立 MoE EP 原型在 2×B300 NCCL 作业 `4800048` 3/3 通过，覆盖 MCore all-to-all dispatcher、局部 packed experts、router/shared 梯度、全局 aux 和分布式 checkpoint；它尚未接入完整文本模型或真实规模训练。

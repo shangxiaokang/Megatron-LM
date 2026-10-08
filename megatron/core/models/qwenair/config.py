@@ -150,8 +150,8 @@ class QwenAirTextConfig:
             raise ValueError("Only the QwenAir sigmoid output gate is supported")
         if self.hidden_act != "silu":
             raise ValueError("Only the QwenAir SiLU activation is supported")
-        if self.qsa_backend not in ("dense", "te_reference"):
-            raise ValueError("qsa_backend must be 'dense' or 'te_reference'")
+        if self.qsa_backend not in ("dense", "te_reference", "te_indexed_sdpa"):
+            raise ValueError("qsa_backend must be 'dense', 'te_reference', or 'te_indexed_sdpa'")
         if self.ple_layer_ids:
             heads = (self.ngram_size - 1) * self.heads_per_ngram
             if self.ngram_size < 2 or self.ple_embed_dim <= 0 or self.ple_embed_dim % heads:
