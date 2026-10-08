@@ -335,13 +335,22 @@ class QwenAirForCausalLM(MegatronModule):
             if isinstance(module, QwenAirExpertParallelBlock):
                 axis_map[f"{name}.experts.gate_up_proj"] = 0
                 axis_map[f"{name}.experts.down_proj"] = 0
+        # PLE/expert offsets vary across EP while replicas of each offset vary
+        # across EDP. Dense tensors are replicas across both axes. Passing
+        # WORLD here would assign every EP offset a distinct DP replica id and
+        # could cause DCP to omit nonzero EP shards as non-main replicas.
+        checkpoint_dp_group = (
+            self.pg_collection.expt_dp
+            if self.pg_collection is not None and hasattr(self.pg_collection, "expt_dp")
+            else (metadata or {}).get("dp_cp_group")
+        )
         return make_sharded_tensors_for_checkpoint(
             self.state_dict(prefix="", keep_vars=True),
             prefix,
             axis_map,
             sharded_offsets,
             tp_group=self.ep_group if self.ep_group is not None else self.ple_process_group,
-            dp_cp_group=(metadata or {}).get("dp_cp_group"),
+            dp_cp_group=checkpoint_dp_group,
         )
 
     def sync_ep_replicated_gradients(self) -> None:
@@ -385,6 +394,20 @@ class QwenAirForCausalLM(MegatronModule):
                     nn.init.zeros_(module.bias)
             elif isinstance(module, nn.Embedding):
                 nn.init.normal_(module.weight, std=config.initializer_range)
+
+    def set_input_tensor(self, input_tensor: Tensor | list[Tensor | None] | None) -> None:
+        """Accept MCore's empty PP input while pipeline parallelism is disabled.
+
+        The forward/backward schedule calls this hook even for ``PP=1``. A
+        nonempty pipeline input would imply an unsupported PP layout, so it is
+        rejected instead of being silently ignored.
+        """
+        if input_tensor is None:
+            return
+        if isinstance(input_tensor, (list, tuple)) and len(input_tensor) == 1:
+            if input_tensor[0] is None:
+                return
+        raise NotImplementedError("QwenAir set_input_tensor supports only the PP=1 empty input")
 
     def forward(
         self,

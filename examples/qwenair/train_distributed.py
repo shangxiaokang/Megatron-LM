@@ -232,13 +232,17 @@ def train_step(
 def _checkpoint_state(
     model: DistributedDataParallel, optimizer: Any, groups: QwenAirProcessGroups, loading: bool
 ) -> dict[str, Any]:
-    metadata = {
+    optimizer_metadata = {
         "dp_cp_group": groups.collection.dp_cp,
         "distrib_optim_sharding_type": "dp_reshardable",
     }
-    model_state = model.module.sharded_state_dict(metadata=metadata)
+    model_state = model.module.sharded_state_dict(
+        metadata={"dp_cp_group": groups.collection.expt_dp}
+    )
     state: dict[str, Any] = {"model": model_state}
-    state["optimizer"] = optimizer.sharded_state_dict(state, metadata=metadata, is_loading=loading)
+    state["optimizer"] = optimizer.sharded_state_dict(
+        state, metadata=optimizer_metadata, is_loading=loading
+    )
     return state
 
 

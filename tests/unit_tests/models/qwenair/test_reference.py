@@ -126,6 +126,16 @@ def test_pre_shifted_megatron_labels_match_hf_internal_shift():
     torch.testing.assert_close(megatron_output.loss, hf_output.loss)
 
 
+def test_pp1_schedule_input_hook_is_fail_closed():
+    """Accept MCore's PP=1 sentinel and reject a real pipeline activation."""
+    model = QwenAirForCausalLM(tiny_config())
+    model.set_input_tensor(None)
+    model.set_input_tensor([None])
+    model.set_input_tensor((None,))
+    with pytest.raises(NotImplementedError, match="PP=1"):
+        model.set_input_tensor(torch.zeros(1, 2, model.config.hidden_size))
+
+
 def test_external_visual_embeddings_keep_original_ple_ids_and_gradients():
     """Visual scatter enters the text stream without changing PLE token history."""
     import pytest

@@ -160,6 +160,11 @@ def _ddp_oracle_worker(rank: int, port: int) -> None:
         ple_name = "model.layers.0.ple.ple_embedding.ngram_embedding.weight"
         expert_name = "model.layers.1.mlp.experts.gate_up_proj"
         dense_name = "lm_head.weight"
+        sharded = module.sharded_state_dict(metadata={"dp_cp_group": dist.group.WORLD})
+        ep_rank = dist.get_rank(groups.ep_group)
+        expert_dp_rank = dist.get_rank(groups.expert_data_parallel_group)
+        assert sharded[expert_name].replica_id == (0, 0, expert_dp_rank)
+        assert sharded[dense_name].replica_id == (0, ep_rank, expert_dp_rank)
         assert not getattr(reference_parameters[ple_name], "allreduce", True)
         assert not getattr(reference_parameters[expert_name], "allreduce", True)
         assert getattr(reference_parameters[dense_name], "allreduce", True)
