@@ -122,6 +122,13 @@ class QwenAirExpertParallelBlock(nn.Module):
         )
         self.gate = QwenAirTopKRouter(config)
         self.experts = QwenAirExperts(config, num_local_experts=self.num_local_experts)
+        # MCore DDP uses ``param.allreduce`` to separate expert shards from
+        # parameters replicated across the full data-parallel group.  Without
+        # this stamp, equal-shaped shards owned by different EP ranks are
+        # incorrectly averaged together.  Expert parameters instead reduce
+        # over the expert-data-parallel group supplied to DDP by the trainer.
+        for parameter in self.experts.parameters():
+            setattr(parameter, "allreduce", self.ep_size == 1)
         self.shared_expert = QwenAirMLP(config)
         self.shared_expert_gate = nn.Linear(config.hidden_size, 1, bias=False)
 
