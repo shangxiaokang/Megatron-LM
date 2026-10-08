@@ -13,6 +13,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from .config import QwenAirTextConfig
+from .initialization import initialize_qwenair_sharded_normal_
 from .layers import QwenAirRMSNorm
 
 _MASK64 = (1 << 64) - 1
@@ -180,7 +181,19 @@ class QwenAirNGramEmbedding(nn.Module):
         self.register_buffer("layer_multipliers", multipliers)
         self.register_buffer("ngram_heads_vocab_sizes", sizes)
         self.register_buffer("ngram_heads_offsets", offsets)
-        self.ngram_embedding = nn.Embedding(self.rows_per_rank, head_width)
+        weight = torch.empty(self.rows_per_rank, head_width)
+        self.ngram_embedding = nn.Embedding(
+            self.rows_per_rank, head_width, _weight=weight
+        )
+        initialize_qwenair_sharded_normal_(
+            self.ngram_embedding.weight,
+            global_element_start=self.shard_start * head_width,
+            logical_numel=self.padded_rows * head_width,
+            base_seed=config.seed,
+            namespace="qwenair.ple.table",
+            layer_idx=layer_idx,
+            std=config.initializer_range,
+        )
 
     def lookup_indices(self, indices: Tensor) -> Tensor:
         """Route arbitrary local index counts to row owners and return their values.

@@ -11,6 +11,7 @@ from torch import Tensor, nn
 from torch.nn import functional as F
 
 from .config import QwenAirTextConfig
+from .initialization import initialize_qwenair_expert_normal_
 
 
 class QwenAirRMSNorm(nn.Module):
@@ -203,20 +204,43 @@ class QwenAirMLP(nn.Module):
 class QwenAirExperts(nn.Module):
     """Packed routed experts, with optional local-only expert allocation."""
 
-    def __init__(self, config: QwenAirTextConfig, num_local_experts: int | None = None) -> None:
+    def __init__(
+        self,
+        config: QwenAirTextConfig,
+        num_local_experts: int | None = None,
+        *,
+        layer_idx: int = 0,
+        first_global_expert: int = 0,
+    ) -> None:
         super().__init__()
         self.intermediate_dim = config.moe_intermediate_size
         expert_count = config.num_experts if num_local_experts is None else num_local_experts
         if expert_count < 1 or expert_count > config.num_experts:
             raise ValueError("num_local_experts must be between 1 and num_experts")
+        if first_global_expert < 0 or first_global_expert + expert_count > config.num_experts:
+            raise ValueError("The local QwenAir expert range is outside the logical expert set")
         self.gate_up_proj = nn.Parameter(
             torch.empty(expert_count, 2 * self.intermediate_dim, config.hidden_size)
         )
         self.down_proj = nn.Parameter(
             torch.empty(expert_count, config.hidden_size, self.intermediate_dim)
         )
-        nn.init.normal_(self.gate_up_proj, std=config.initializer_range)
-        nn.init.normal_(self.down_proj, std=config.initializer_range)
+        initialize_qwenair_expert_normal_(
+            self.gate_up_proj,
+            base_seed=config.seed,
+            namespace="qwenair.expert.gate_up",
+            layer_idx=layer_idx,
+            first_global_expert=first_global_expert,
+            std=config.initializer_range,
+        )
+        initialize_qwenair_expert_normal_(
+            self.down_proj,
+            base_seed=config.seed,
+            namespace="qwenair.expert.down",
+            layer_idx=layer_idx,
+            first_global_expert=first_global_expert,
+            std=config.initializer_range,
+        )
 
     def forward(self, hidden: Tensor, indices: Tensor, scores: Tensor) -> Tensor:
         """Dispatch selected tokens without materializing all expert activations."""
@@ -276,10 +300,10 @@ class QwenAirTopKRouter(nn.Module):
 class QwenAirSparseMoeBlock(nn.Module):
     """QwenAir routed experts plus a sigmoid-gated shared expert."""
 
-    def __init__(self, config: QwenAirTextConfig) -> None:
+    def __init__(self, config: QwenAirTextConfig, layer_idx: int = 0) -> None:
         super().__init__()
         self.gate = QwenAirTopKRouter(config)
-        self.experts = QwenAirExperts(config)
+        self.experts = QwenAirExperts(config, layer_idx=layer_idx)
         self.shared_expert = QwenAirMLP(config)
         self.shared_expert_gate = nn.Linear(config.hidden_size, 1, bias=False)
 

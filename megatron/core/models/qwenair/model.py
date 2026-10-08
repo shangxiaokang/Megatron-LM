@@ -58,11 +58,13 @@ class QwenAirDecoderLayer(nn.Module):
         else:
             self.self_attn = QwenAirQSA(config, layer_idx)
         if ep_group is None:
-            self.mlp = QwenAirSparseMoeBlock(config)
+            self.mlp = QwenAirSparseMoeBlock(config, layer_idx)
         else:
             from .moe_ep import QwenAirExpertParallelBlock
 
-            self.mlp = QwenAirExpertParallelBlock(config, ep_group, expert_tp_group)
+            self.mlp = QwenAirExpertParallelBlock(
+                config, ep_group, expert_tp_group, layer_idx
+            )
         ple_layer_index = (
             config.ple_layer_ids.index(layer_idx + 1)
             if layer_idx + 1 in config.ple_layer_ids
@@ -387,12 +389,17 @@ class QwenAirForCausalLM(MegatronModule):
 
     def _initialize_weights(self, config: QwenAirTextConfig) -> None:
         """Match HF zero-centered norms, linear initialization, and PLE zero conv."""
+        ple_embeddings = {
+            module.ngram_embedding
+            for module in self.modules()
+            if isinstance(module, QwenAirNGramEmbedding)
+        }
         for module in self.modules():
             if isinstance(module, nn.Linear):
                 nn.init.normal_(module.weight, std=config.initializer_range)
                 if module.bias is not None:
                     nn.init.zeros_(module.bias)
-            elif isinstance(module, nn.Embedding):
+            elif isinstance(module, nn.Embedding) and module not in ple_embeddings:
                 nn.init.normal_(module.weight, std=config.initializer_range)
 
     def set_input_tensor(self, input_tensor: Tensor | list[Tensor | None] | None) -> None:

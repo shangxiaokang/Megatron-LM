@@ -149,7 +149,9 @@ def _ddp_oracle_worker(rank: int, port: int) -> None:
         ddp = DistributedDataParallel(
             config,
             DistributedDataParallelConfig(
-                grad_reduce_in_fp32=True, overlap_grad_reduce=False, use_distributed_optimizer=False
+                grad_reduce_in_fp32=True,
+                overlap_grad_reduce=False,
+                use_distributed_optimizer=False,
             ),
             module,
             pg_collection=groups.collection,
@@ -169,44 +171,45 @@ def _ddp_oracle_worker(rank: int, port: int) -> None:
         assert not getattr(reference_parameters[expert_name], "allreduce", True)
         assert getattr(reference_parameters[dense_name], "allreduce", True)
 
-        generator = torch.Generator(device=device).manual_seed(1000 + rank)
-        tokens = torch.randint(
-            4, config.vocab_size, (1, 9 + rank), generator=generator, device=device
-        )
-        tokens[:, 3] = config.eos_token_id
-
-        reference.zero_grad(set_to_none=True)
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            reference_output = reference(tokens, labels=tokens, output_router_logits=True)
-            reference_loss, _ = groups.losses_for_mcore_ddp(
-                reference_output.loss,
-                tokens.shape[1] - 1,
-                aux_loss=reference_output.aux_loss,
-                aux_loss_coefficient=config.router_aux_loss_coef,
+        for step in range(2):
+            generator = torch.Generator(device=device).manual_seed(1000 + 100 * step + rank)
+            tokens = torch.randint(
+                4, config.vocab_size, (1, 9 + rank), generator=generator, device=device
             )
-        reference_loss.backward()
-        _manual_gradient_sync(reference, groups)
+            tokens[:, 3] = config.eos_token_id
 
-        ddp.zero_grad_buffer()
-        with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
-            ddp_output = ddp(tokens, labels=tokens, output_router_logits=True)
-            ddp_loss, _ = groups.losses_for_mcore_ddp(
-                ddp_output.loss,
-                tokens.shape[1] - 1,
-                aux_loss=ddp_output.aux_loss,
-                aux_loss_coefficient=config.router_aux_loss_coef,
-            )
-        ddp_loss.backward()
-        ddp.finish_grad_sync()
+            reference.zero_grad(set_to_none=True)
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                reference_output = reference(tokens, labels=tokens, output_router_logits=True)
+                reference_loss, _ = groups.losses_for_mcore_ddp(
+                    reference_output.loss,
+                    tokens.shape[1] - 1,
+                    aux_loss=reference_output.aux_loss,
+                    aux_loss_coefficient=config.router_aux_loss_coef,
+                )
+            reference_loss.backward()
+            _manual_gradient_sync(reference, groups)
 
-        for name in (dense_name, expert_name, ple_name):
-            expected = reference_parameters[name].grad.float()
-            actual = ddp_parameters[name].main_grad
-            # A routed expert may receive no tokens in a small random batch.  Its
-            # zero gradient must still agree with the explicit EDP reduction.
-            if name != expert_name:
-                assert expected.abs().sum() > 0, name
-            torch.testing.assert_close(actual, expected, rtol=0.03, atol=3e-4, msg=name)
+            ddp.zero_grad_buffer()
+            with torch.autocast(device_type="cuda", dtype=torch.bfloat16):
+                ddp_output = ddp(tokens, labels=tokens, output_router_logits=True)
+                ddp_loss, _ = groups.losses_for_mcore_ddp(
+                    ddp_output.loss,
+                    tokens.shape[1] - 1,
+                    aux_loss=ddp_output.aux_loss,
+                    aux_loss_coefficient=config.router_aux_loss_coef,
+                )
+            ddp_loss.backward()
+            ddp.finish_grad_sync()
+
+            for name in (dense_name, expert_name, ple_name):
+                expected = reference_parameters[name].grad.float()
+                actual = ddp_parameters[name].main_grad
+                # A routed expert may receive no tokens in a small random batch.  Its
+                # zero gradient must still agree with the explicit EDP reduction.
+                if name != expert_name:
+                    assert expected.abs().sum() > 0, name
+                torch.testing.assert_close(actual, expected, rtol=0.03, atol=3e-4, msg=name)
 
         dense_bucket_parameters = {
             parameter
@@ -223,6 +226,36 @@ def _ddp_oracle_worker(rank: int, port: int) -> None:
         assert ddp_parameters[dense_name] in dense_bucket_parameters
         assert ddp_parameters[expert_name] in expert_bucket_parameters
         assert ddp_parameters[ple_name] in expert_bucket_parameters
+
+        del ddp, module, reference
+        torch.cuda.empty_cache()
+        from examples.qwenair.train_distributed import (
+            build_model_and_optimizer,
+            ddp_bucket_report,
+            make_batch,
+            train_step,
+        )
+
+        trained, optimizer = build_model_and_optimizer(
+            config,
+            groups,
+            device,
+            learning_rate=1e-3,
+            use_distributed_optimizer=True,
+            ddp_bucket_size=500,
+        )
+        report = ddp_bucket_report(trained, configured_bucket_size=500)
+        assert report["dense_bucket_count"] > 1
+        assert report["expert_bucket_count"] > 1
+        assert report["largest_bucket_elements"] < 1 << 31
+        indexer = trained.module.model.layers[1].self_attn.indexer.index_qk_proj.weight
+        assert indexer.requires_grad
+        for step in range(2):
+            tokens = make_batch(config, step, rank, 1, 9 + rank, device)
+            loss, grad_norm = train_step(trained, optimizer, groups, tokens)
+            assert torch.isfinite(torch.tensor((loss, grad_norm))).all()
+            assert indexer.grad is None
+            assert torch.count_nonzero(indexer.main_grad) == 0
     finally:
         dist.destroy_process_group()
 

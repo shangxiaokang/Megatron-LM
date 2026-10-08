@@ -32,7 +32,10 @@ from megatron.core.models.qwenair import (
     estimate_qwenair_training_memory,
     plan_qwenair_parallel_topology,
 )
-from megatron.core.optimizer import OptimizerConfig, get_megatron_optimizer
+from megatron.core.optimizer import DistributedOptimizer, OptimizerConfig, get_megatron_optimizer
+
+_QWENAIR_DDP_BUCKET_SIZE = 40_000_000
+_MAX_QWENAIR_COLLECTIVE_ELEMENTS = 1 << 31
 
 
 def tiny_config(expert_model_parallel_size: int, qsa_backend: str) -> QwenAirTextConfig:
@@ -151,6 +154,7 @@ def build_model_and_optimizer(
     device: torch.device,
     learning_rate: float,
     use_distributed_optimizer: bool,
+    ddp_bucket_size: int = _QWENAIR_DDP_BUCKET_SIZE,
 ) -> tuple[DistributedDataParallel, Any]:
     """Construct QwenAir, MCore DDP, and the MCore Adam optimizer."""
     if not config.calculate_per_token_loss:
@@ -165,9 +169,23 @@ def build_model_and_optimizer(
         overlap_grad_reduce=False,
         overlap_param_gather=False,
         use_distributed_optimizer=use_distributed_optimizer,
+        bucket_size=ddp_bucket_size,
     )
+    full_param_layout = None
+    if use_distributed_optimizer:
+        full_param_layout = DistributedOptimizer.compute_full_param_layout(
+            [parameter for parameter in module.parameters() if parameter.requires_grad],
+            ddp_bucket_size,
+            groups.collection.dp_cp.size(),
+            ddp_config,
+            expert_data_parallel_world_size=groups.collection.expt_dp.size(),
+        )
     model = DistributedDataParallel(
-        config=config, ddp_config=ddp_config, module=module, pg_collection=groups.collection
+        config=config,
+        ddp_config=ddp_config,
+        module=module,
+        pg_collection=groups.collection,
+        full_param_layout=full_param_layout,
     )
     model.broadcast_params()
     optimizer_config = OptimizerConfig(
@@ -181,6 +199,36 @@ def build_model_and_optimizer(
         optimizer_config, [model], use_gloo_process_groups=False, pg_collection=groups.collection
     )
     return model, optimizer
+
+
+def ddp_bucket_report(
+    model: DistributedDataParallel,
+    configured_bucket_size: int = _QWENAIR_DDP_BUCKET_SIZE,
+) -> dict[str, int]:
+    """Validate and summarize the finite synchronous gradient collectives."""
+    dense_sizes = [
+        bucket.grad_data.numel() for buffer in model.buffers for bucket in buffer.buckets
+    ]
+    expert_sizes = [
+        bucket.grad_data.numel()
+        for buffer in model.expert_parallel_buffers
+        for bucket in buffer.buckets
+    ]
+    all_sizes = dense_sizes + expert_sizes
+    if not all_sizes:
+        raise RuntimeError("QwenAir DDP constructed no gradient buckets")
+    largest = max(all_sizes)
+    if largest >= _MAX_QWENAIR_COLLECTIVE_ELEMENTS:
+        raise RuntimeError(
+            "QwenAir DDP has a gradient collective with 2^31 or more elements; "
+            "split the oversized parameter before target training"
+        )
+    return {
+        "configured_bucket_size": configured_bucket_size,
+        "dense_bucket_count": len(dense_sizes),
+        "expert_bucket_count": len(expert_sizes),
+        "largest_bucket_elements": largest,
+    }
 
 
 def make_batch(
@@ -303,6 +351,7 @@ def run_training(args: argparse.Namespace, config: QwenAirTextConfig) -> dict[st
     model, optimizer = build_model_and_optimizer(
         config, groups, device, args.learning_rate, args.distributed_optimizer
     )
+    bucket_report = ddp_bucket_report(model)
     topology = groups.topology
     if rank == 0:
         print(
@@ -313,6 +362,7 @@ def run_training(args: argparse.Namespace, config: QwenAirTextConfig) -> dict[st
                     "expert_data_parallel_size": topology.expert_data_parallel_size,
                     "expert_parallel_groups": topology.expert_parallel_groups,
                     "expert_data_parallel_groups": topology.expert_data_parallel_groups,
+                    "ddp_buckets": bucket_report,
                 },
                 indent=2,
             )
@@ -365,6 +415,7 @@ def run_training(args: argparse.Namespace, config: QwenAirTextConfig) -> dict[st
         "losses": losses,
         "grad_norms": grad_norms,
         "distributed_optimizer": args.distributed_optimizer,
+        "ddp_buckets": bucket_report,
         "checkpoint_dir": str(args.checkpoint_dir),
         "restart_verified": args.verify_restart,
     }
