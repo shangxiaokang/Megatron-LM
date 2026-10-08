@@ -518,7 +518,7 @@ class FullyShardedDataParallel(_BaseDataParallel):
 FullyShardedDataParallelV1 = FullyShardedDataParallel
 
 
-class FullyShardedDataParallelV2(FullyShardedDataParallel):
+class FullyShardedDataParallelV2(_BaseDataParallel):
     """Unavailable MFSDP v2 adapter exposed for Bridge import compatibility."""
 
     def __init__(self, *args, **kwargs):

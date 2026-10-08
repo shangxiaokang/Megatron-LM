@@ -13,6 +13,8 @@ from megatron.core.distributed.fsdp.mcore_fsdp_adapter import (
 
 def test_original_fsdp_adapter_is_the_v1_compatibility_type():
     assert FullyShardedDataParallelV1 is FullyShardedDataParallel
+    assert FullyShardedDataParallelV2 is not FullyShardedDataParallelV1
+    assert not issubclass(FullyShardedDataParallelV2, FullyShardedDataParallelV1)
 
 
 def test_unavailable_fsdp_v2_fails_closed():
