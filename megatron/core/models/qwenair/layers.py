@@ -225,7 +225,8 @@ class QwenAirExperts(nn.Module):
             source = hidden.index_select(0, token_idx)
             gate, up = F.linear(source, self.gate_up_proj[expert]).chunk(2, dim=-1)
             expert_output = F.linear(F.silu(gate) * up, self.down_proj[expert])
-            result.index_add_(0, token_idx, expert_output * scores[token_idx, slot_idx].unsqueeze(-1))
+            contribution = expert_output * scores[token_idx, slot_idx].unsqueeze(-1)
+            result.index_add_(0, token_idx, contribution.to(result.dtype))
         return result
 
 

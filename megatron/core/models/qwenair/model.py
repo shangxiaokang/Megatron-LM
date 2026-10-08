@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import torch
+import torch.distributed as dist
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -21,7 +22,7 @@ from .layers import (
     qwenair_global_router_loss,
     qwenair_rope,
 )
-from .ple import QwenAirPLE, _find_nth_prime_after
+from .ple import QwenAirNGramEmbedding, QwenAirPLE, qwenair_ngram_metadata
 from .qsa import QwenAirQSA
 
 
@@ -38,7 +39,12 @@ class QwenAirOutput:
 class QwenAirDecoderLayer(nn.Module):
     """A QwenAir GDN/QSA layer with MoE and two gated residual cells."""
 
-    def __init__(self, config: QwenAirTextConfig, layer_idx: int) -> None:
+    def __init__(
+        self,
+        config: QwenAirTextConfig,
+        layer_idx: int,
+        ple_process_group: dist.ProcessGroup | None = None,
+    ) -> None:
         super().__init__()
         self.layer_type = config.layer_types[layer_idx]
         if self.layer_type == "linear_attention":
@@ -47,7 +53,10 @@ class QwenAirDecoderLayer(nn.Module):
             self.self_attn = QwenAirQSA(config, layer_idx)
         self.mlp = QwenAirSparseMoeBlock(config)
         ple_layer_index = config.ple_layer_ids.index(layer_idx + 1) if layer_idx + 1 in config.ple_layer_ids else None
-        self.ple = QwenAirPLE(config, layer_idx, ple_layer_index) if ple_layer_index is not None else None
+        self.ple = (
+            QwenAirPLE(config, layer_idx, ple_layer_index, ple_process_group)
+            if ple_layer_index is not None else None
+        )
         self.attn_hyper_connection = QwenAirGatedResidual(config)
         self.mlp_hyper_connection = QwenAirGatedResidual(config)
 
@@ -77,11 +86,16 @@ class QwenAirDecoderLayer(nn.Module):
 class QwenAirTextModel(nn.Module):
     """QwenAir text decoder with an HF-compatible logical state dict."""
 
-    def __init__(self, config: QwenAirTextConfig) -> None:
+    def __init__(
+        self, config: QwenAirTextConfig, ple_process_group: dist.ProcessGroup | None = None
+    ) -> None:
         super().__init__()
         self.config = config
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
-        self.layers = nn.ModuleList(QwenAirDecoderLayer(config, idx) for idx in range(config.num_hidden_layers))
+        self.layers = nn.ModuleList(
+            QwenAirDecoderLayer(config, idx, ple_process_group)
+            for idx in range(config.num_hidden_layers)
+        )
         self.hyper_connection_mixer = QwenAirGatedResidual(config, use_combine=False)
 
     def forward(
@@ -130,40 +144,73 @@ class QwenAirTextModel(nn.Module):
 class QwenAirForCausalLM(MegatronModule):
     """Trainable QwenAir text reference with explicit MTP/indexer boundaries.
 
-    The forward and checkpoint layout are single-rank.  The indexer uses a hard
+    The forward is a small-context reference; PLE can use row-sharded
+    checkpoints on an explicit process group. The indexer uses a hard
     top-k mask, so LM loss cannot train its projection.  An independent indexer
     target/loss is required for exact QwenAir pretraining and is not invented
     here.  MTP is also excluded pending its authoritative training contract.
     """
 
-    def __init__(self, config: QwenAirTextConfig) -> None:
+    def __init__(
+        self, config: QwenAirTextConfig, ple_process_group: dist.ProcessGroup | None = None
+    ) -> None:
         super().__init__(config)
-        self._check_single_rank_resources(config)
-        self.model = QwenAirTextModel(config)
+        self.ple_process_group = ple_process_group
+        self._check_single_rank_resources(config, ple_process_group)
+        self.model = QwenAirTextModel(config, ple_process_group)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self._initialize_weights(config)
         if config.tie_word_embeddings:
             self.lm_head.weight = self.model.embed_tokens.weight
 
     @staticmethod
-    def _check_single_rank_resources(config: QwenAirTextConfig) -> None:
+    def _check_single_rank_resources(
+        config: QwenAirTextConfig, ple_process_group: dist.ProcessGroup | None = None
+    ) -> None:
         """Refuse target-size allocation before materializing any giant tensor."""
         if config.ple_layer_ids:
-            heads = (config.ngram_size - 1) * config.heads_per_ngram
-            last_head = len(config.ple_layer_ids) * heads
-            table_rows = sum(
-                _find_nth_prime_after(config.ngram_vocab_size_base - 1, head + 1)
-                for head in range(last_head)
+            if ple_process_group is not None and not dist.is_initialized():
+                raise ValueError("PLE process_group requires initialized torch.distributed")
+            group_size = (
+                dist.get_world_size(ple_process_group) if ple_process_group is not None else 1
             )
+            heads = (config.ngram_size - 1) * config.heads_per_ngram
             head_width = config.ple_embed_dim // heads
-            if table_rows * head_width > config.max_single_rank_ple_elements:
-                raise ValueError("QwenAir PLE needs a distributed table before target-size construction")
+            for ple_index in range(len(config.ple_layer_ids)):
+                _, _, _, table_rows = qwenair_ngram_metadata(config, ple_index)
+                if (
+                    table_rows % group_size
+                    or table_rows // group_size * head_width > config.max_single_rank_ple_elements
+                ):
+                    raise ValueError(
+                        "QwenAir PLE needs a distributed table before target-size construction"
+                    )
         expert_parameters = (
             config.num_hidden_layers * config.num_experts * 3
             * config.moe_intermediate_size * config.hidden_size
         )
         if expert_parameters > config.max_single_rank_parameters:
             raise ValueError("QwenAir experts need distributed sharding before target-size construction")
+
+    def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+        """Mark only PLE table rows as axis-0 shards in MCore checkpoints."""
+        if self.ple_process_group is None:
+            return super().sharded_state_dict(prefix, sharded_offsets, metadata)
+        from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
+
+        axis_map = {
+            f"{name}.ngram_embedding.weight": 0
+            for name, module in self.named_modules()
+            if isinstance(module, QwenAirNGramEmbedding) and module.group_size > 1
+        }
+        return make_sharded_tensors_for_checkpoint(
+            self.state_dict(prefix="", keep_vars=True),
+            prefix,
+            axis_map,
+            sharded_offsets,
+            tp_group=self.ple_process_group,
+            dp_cp_group=(metadata or {}).get("dp_cp_group"),
+        )
 
     def _initialize_weights(self, config: QwenAirTextConfig) -> None:
         """Match HF zero-centered norms, linear initialization, and PLE zero conv."""

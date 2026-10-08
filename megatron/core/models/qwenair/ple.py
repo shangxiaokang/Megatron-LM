@@ -7,6 +7,8 @@ from __future__ import annotations
 import math
 
 import torch
+import torch.distributed as dist
+import torch.distributed.nn.functional as dist_nn
 from torch import Tensor, nn
 from torch.nn import functional as F
 
@@ -134,10 +136,28 @@ def qwenair_ngram_indices(
 
 
 class QwenAirNGramEmbedding(nn.Module):
-    """EOS-aware deterministic n-gram hash table with HF-compatible keys."""
+    """EOS-aware hash table with optional row shards and variable-length lookup.
 
-    def __init__(self, config: QwenAirTextConfig, layer_idx: int, ple_layer_index: int) -> None:
+    The local ``ngram_embedding.weight`` is a contiguous row slice of the
+    padded logical HF table. An explicit process group may be the MCore TP
+    group or a dedicated table group; no global parallel-state lookup occurs.
+    """
+
+    def __init__(
+        self,
+        config: QwenAirTextConfig,
+        layer_idx: int,
+        ple_layer_index: int,
+        process_group: dist.ProcessGroup | None = None,
+    ) -> None:
         super().__init__()
+        if process_group is not None and not dist.is_initialized():
+            raise ValueError(
+                "PLE process_group requires an initialized torch.distributed process group"
+            )
+        self.process_group = process_group
+        self.group_size = dist.get_world_size(process_group) if process_group is not None else 1
+        self.group_rank = dist.get_rank(process_group) if process_group is not None else 0
         self.layer_idx = layer_idx
         self.ngram_size = config.ngram_size
         self.context_len = self.ngram_size - 1
@@ -146,15 +166,79 @@ class QwenAirNGramEmbedding(nn.Module):
         self.eos_token_id = config.eos_token_id[0] if isinstance(config.eos_token_id, list) else config.eos_token_id
         head_width = config.ple_embed_dim // self.ngram_heads
         multipliers, sizes, offsets, padded_rows = qwenair_ngram_metadata(config, ple_layer_index)
-        if padded_rows * head_width > config.max_single_rank_ple_elements:
+        if padded_rows % self.group_size:
+            raise ValueError("Padded PLE rows must divide evenly across the table process group")
+        self.padded_rows = padded_rows
+        self.rows_per_rank = padded_rows // self.group_size
+        self.shard_start = self.group_rank * self.rows_per_rank
+        self.shard_end = self.shard_start + self.rows_per_rank
+        if self.rows_per_rank * head_width > config.max_single_rank_ple_elements:
             raise ValueError(
-                f"PLE needs {padded_rows * head_width} elements on one rank; "
-                "use a distributed table before constructing the target model"
+                f"PLE needs {self.rows_per_rank * head_width} elements on this rank; "
+                "increase table shards or the explicit resource limit"
             )
         self.register_buffer("layer_multipliers", multipliers)
         self.register_buffer("ngram_heads_vocab_sizes", sizes)
         self.register_buffer("ngram_heads_offsets", offsets)
-        self.ngram_embedding = nn.Embedding(padded_rows, head_width)
+        self.ngram_embedding = nn.Embedding(self.rows_per_rank, head_width)
+
+    def lookup_indices(self, indices: Tensor) -> Tensor:
+        """Route arbitrary local index counts to row owners and return their values.
+
+        The float-valued return exchange uses PyTorch's differentiable all-to-all
+        operator. Its backward sends each requester's gradients to the owning
+        shard, where ``F.embedding`` accumulates the correct local row gradient.
+        """
+        weight = self.ngram_embedding.weight
+        if indices.device != weight.device:
+            raise ValueError("PLE indices and table shard must be on the same device")
+        flat = indices.long().reshape(-1)
+        if torch.any((flat < 0) | (flat >= self.padded_rows)):
+            raise ValueError("PLE lookup index is outside the padded logical table")
+        if self.group_size == 1:
+            return F.embedding(indices.long(), weight)
+
+        owners = torch.div(flat, self.rows_per_rank, rounding_mode="floor")
+        order = owners.argsort(stable=True)
+        send_ids = flat.index_select(0, order).contiguous()
+        send_counts = torch.bincount(owners, minlength=self.group_size).to(torch.int64)
+        receive_counts = torch.empty_like(send_counts)
+        dist.all_to_all_single(receive_counts, send_counts, group=self.process_group)
+        send_splits = send_counts.tolist()
+        receive_splits = receive_counts.tolist()
+
+        receive_ids = torch.empty(sum(receive_splits), dtype=torch.long, device=flat.device)
+        dist.all_to_all_single(
+            receive_ids, send_ids,
+            output_split_sizes=receive_splits,
+            input_split_sizes=send_splits,
+            group=self.process_group,
+        )
+        local_ids = receive_ids - self.shard_start
+        local_values = F.embedding(local_ids, weight)
+        returned = torch.empty(
+            flat.numel(), weight.shape[1], dtype=weight.dtype, device=weight.device
+        )
+        returned = dist_nn.all_to_all_single(
+            returned, local_values,
+            output_split_sizes=send_splits,
+            input_split_sizes=receive_splits,
+            group=self.process_group,
+        )
+        inverse_order = order.argsort()
+        return returned.index_select(0, inverse_order).reshape(*indices.shape, weight.shape[1])
+
+    def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
+        """Describe the logical HF table as equal axis-0 checkpoint shards."""
+        from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
+
+        state = self.state_dict(prefix="", keep_vars=True)
+        axis_map = {"ngram_embedding.weight": 0} if self.group_size > 1 else {}
+        dp_cp_group = (metadata or {}).get("dp_cp_group")
+        return make_sharded_tensors_for_checkpoint(
+            state, prefix, axis_map, sharded_offsets,
+            tp_group=self.process_group, dp_cp_group=dp_cp_group,
+        )
 
     def forward(self, input_ids: Tensor) -> Tensor:
         """Hash n-grams within each EOS-delimited segment and look up features."""
@@ -162,18 +246,26 @@ class QwenAirNGramEmbedding(nn.Module):
             input_ids, self.eos_token_id, self.ngram_size, self.heads_per_ngram,
             self.layer_multipliers, self.ngram_heads_vocab_sizes, self.ngram_heads_offsets,
         )
-        return self.ngram_embedding(indices).flatten(-2)
+        return self.lookup_indices(indices).flatten(-2)
 
 
 class QwenAirPLE(nn.Module):
     """Hash, gate, and dilated depthwise convolution before a GDN layer."""
 
-    def __init__(self, config: QwenAirTextConfig, layer_idx: int, ple_layer_index: int) -> None:
+    def __init__(
+        self,
+        config: QwenAirTextConfig,
+        layer_idx: int,
+        ple_layer_index: int,
+        process_group: dist.ProcessGroup | None = None,
+    ) -> None:
         super().__init__()
         self.hc_count = config.hc_count
         self.hidden_size = config.hidden_size
         width = self.hc_count * self.hidden_size
-        self.ple_embedding = QwenAirNGramEmbedding(config, layer_idx, ple_layer_index)
+        self.ple_embedding = QwenAirNGramEmbedding(
+            config, layer_idx, ple_layer_index, process_group
+        )
         self.key_proj = nn.Linear(config.ple_embed_dim, width, bias=False)
         self.value_proj = nn.Linear(config.ple_embed_dim, config.hidden_size, bias=False)
         self.norm_key = QwenAirRMSNorm(width, config.rms_norm_eps, group_size=config.hidden_size)

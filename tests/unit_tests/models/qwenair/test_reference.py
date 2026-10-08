@@ -111,6 +111,31 @@ def test_tiny_text_training_has_main_gradients_and_no_indexer_lm_gradient():
     assert not torch.equal(old, model.lm_head.weight)
 
 
+def test_tiny_text_training_with_cuda_bf16_autocast():
+    """Routed expert accumulation keeps the residual dtype under BF16 autocast."""
+    import pytest
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for the BF16 training smoke test")
+    model = QwenAirForCausalLM(tiny_config()).cuda()
+    optimizer = torch.optim.AdamW(model.parameters(), lr=0.001)
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 6]], device="cuda")
+    old_tf32 = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = True
+    try:
+        for _ in range(2):
+            optimizer.zero_grad(set_to_none=True)
+            with torch.autocast("cuda", dtype=torch.bfloat16):
+                output = model(tokens, labels=tokens, output_router_logits=True)
+            assert torch.isfinite(output.loss)
+            output.loss.backward()
+            expert_grad = model.model.layers[0].mlp.experts.gate_up_proj.grad
+            assert expert_grad is not None and torch.isfinite(expert_grad).all()
+            optimizer.step()
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = old_tf32
+
+
 def test_cross_layer_auxiliary_uses_all_router_logits():
     """The global load balancing loss aggregates counts before normalization."""
     logits = (
@@ -243,13 +268,58 @@ def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast():
     positions = torch.arange(13, device="cuda").unsqueeze(0)
     cos, sin = qwenair_rope(tiny_config(), positions, torch.bfloat16)
     visible = torch.ones(13, 13, dtype=torch.bool, device="cuda").tril().unsqueeze(0)
-    with torch.autocast("cuda", dtype=torch.bfloat16):
-        dense_output = dense(dense_input, cos, sin, visible)
-        te_output = te(te_input, cos, sin, visible)
-    torch.testing.assert_close(te_output, dense_output, rtol=0.02, atol=0.002)
-    dense_output.float().square().sum().backward()
-    te_output.float().square().sum().backward()
-    torch.testing.assert_close(te_input.grad, dense_input.grad, rtol=0.03, atol=0.003)
+    old_tf32 = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            dense_output = dense(dense_input, cos, sin, visible)
+            te_output = te(te_input, cos, sin, visible)
+        torch.testing.assert_close(te_output, dense_output, rtol=0.02, atol=0.002)
+        dense_output.float().square().sum().backward()
+        te_output.float().square().sum().backward()
+        torch.testing.assert_close(te_input.grad, dense_input.grad, rtol=0.03, atol=0.003)
+        torch.backends.cuda.matmul.allow_tf32 = True
+        # BF16 smoke remains available under a framework-wide TF32 default.
+        dense(dense_input, cos, sin, visible)
+        strict_fp32 = QwenAirQSA(tiny_config(indexer_compress_ratio=4, indexer_budget=8), 1).cuda()
+        with pytest.raises(NotImplementedError, match="allow_tf32=False"):
+            strict_fp32(dense_input.float(), cos.float(), sin.float(), visible)
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = old_tf32
+
+
+def test_full_text_te_reference_trains_with_fp32_weights_and_bf16_autocast():
+    """RoPE-promoted FP32 Q/K and BF16 V keep exact TE input dtype handling."""
+    import pytest
+
+    pytest.importorskip("transformer_engine.pytorch")
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for the mixed precision TE integration")
+    torch.manual_seed(25)
+    dense = QwenAirForCausalLM(tiny_config(indexer_compress_ratio=4, indexer_budget=8)).cuda()
+    te = QwenAirForCausalLM(
+        tiny_config(indexer_compress_ratio=4, indexer_budget=8, qsa_backend="te_reference")
+    ).cuda()
+    te.load_state_dict(dense.state_dict(), strict=True)
+    tokens = torch.arange(1, 14, device="cuda").unsqueeze(0)
+    old_tf32 = torch.backends.cuda.matmul.allow_tf32
+    torch.backends.cuda.matmul.allow_tf32 = False
+    try:
+        with torch.autocast("cuda", dtype=torch.bfloat16):
+            dense_output = dense(tokens, labels=tokens)
+            te_output = te(tokens, labels=tokens)
+        torch.testing.assert_close(te_output.logits, dense_output.logits, rtol=0.02, atol=0.01)
+        dense_output.loss.backward()
+        te_output.loss.backward()
+        qsa_grad = te.model.layers[1].self_attn.q_proj.weight.grad
+        assert qsa_grad is not None and torch.isfinite(qsa_grad).all()
+        torch.testing.assert_close(
+            qsa_grad, dense.model.layers[1].self_attn.q_proj.weight.grad, rtol=0.05, atol=0.002
+        )
+        optimizer = torch.optim.AdamW(te.parameters(), lr=0.001)
+        optimizer.step()
+    finally:
+        torch.backends.cuda.matmul.allow_tf32 = old_tf32
 
 
 def test_logical_state_dict_roundtrip_and_mtp_failure():

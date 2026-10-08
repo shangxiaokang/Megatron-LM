@@ -157,6 +157,16 @@ class QwenAirQSA(nn.Module):
 
     def forward(self, hidden: Tensor, cos: Tensor, sin: Tensor, visible: Tensor) -> Tensor:
         """Compute selected full attention and its sigmoid output gate."""
+        if (
+            hidden.is_cuda
+            and hidden.dtype == torch.float32
+            and not torch.is_autocast_enabled("cuda")
+            and torch.backends.cuda.matmul.allow_tf32
+        ):
+            raise NotImplementedError(
+                "Strict FP32 QwenAir QSA reference requires "
+                "torch.backends.cuda.matmul.allow_tf32=False throughout forward and backward"
+            )
         batch, length, _ = hidden.shape
         selected = self.indexer(hidden, cos, sin, visible)
         q_with_gate = self.q_proj(hidden).reshape(batch, length, self.num_heads, 2 * self.head_dim)
@@ -186,6 +196,17 @@ class QwenAirQSA(nn.Module):
                 raise ImportError(
                     "Install the QwenAir Transformer Engine reference for qsa_backend='te_reference'"
                 ) from error
+            if value.dtype != query.dtype:
+                # With FP32 weights under BF16 autocast, RoPE's FP32 cos/sin
+                # promote Q/K to FP32 while the unrotated V stays BF16. BF16
+                # values convert exactly to FP32, preserving dense-reference
+                # accumulation and TE's same-dtype Q/K/V contract.
+                if query.dtype == key.dtype == torch.float32 and value.dtype == torch.bfloat16:
+                    value = value.float()
+                else:
+                    raise TypeError(
+                        "TE QSA requires matching Q/K/V dtypes after exact BF16 V promotion"
+                    )
             output = qsa_block_sparse_attention(
                 query, key, value, selected_blocks, scale=self.head_dim**-0.5
             )
