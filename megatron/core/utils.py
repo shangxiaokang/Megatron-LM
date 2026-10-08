@@ -1162,6 +1162,68 @@ def make_tp_sharded_tensor_for_checkpoint(
     )
 
 
+def resolve_gtp_pad_for_alignment(*, fp4=False, fp8_recipe=None, fp8=False):
+    """Map a training recipe to the GTP dim-0 alignment tile size.
+
+    This helper intentionally has no Transformer Engine or GTP imports so that
+    checkpoint loading remains usable in runs that do not enable GTP.
+    """
+    if fp4:
+        return 16
+    if fp8_recipe == "mxfp8":
+        return 32
+    if fp8:
+        return 16
+    return 1
+
+
+def grant_shape_mismatch_for_gtp_padding(sharded_state_dict, checkpoint_dir, pad_for_alignment):
+    """Allow only checkpoint shape differences that can be explained by GTP padding.
+
+    ``gtp_pad_length`` is an optional runtime attribute on a live
+    :class:`ShardedTensor`. Older non-GTP models do not set it and therefore
+    retain the strict checkpoint shape contract.
+    """
+    from megatron.core.dist_checkpointing.dict_utils import nested_values
+
+    sharded_tensors = [
+        value for value in nested_values(sharded_state_dict) if isinstance(value, ShardedTensor)
+    ]
+    if not sharded_tensors:
+        return
+
+    try:
+        from megatron.core.dist_checkpointing.serialization import load_tensors_metadata
+
+        checkpoint_metadata = load_tensors_metadata(str(checkpoint_dir))
+    except Exception as error:  # noqa: BLE001
+        logger.warning(
+            "grant_shape_mismatch_for_gtp_padding: could not read metadata, "
+            "skipping GTP padding check: %s",
+            error,
+        )
+        return
+
+    for sharded_tensor in sharded_tensors:
+        if sharded_tensor.allow_shape_mismatch or sharded_tensor.key not in checkpoint_metadata:
+            continue
+        checkpoint_shape = checkpoint_metadata[sharded_tensor.key].global_shape
+        axis = sharded_tensor.prepend_axis_num
+        if axis >= len(checkpoint_shape):
+            continue
+        checkpoint_dim = int(checkpoint_shape[axis])
+        required_dim = int(sharded_tensor.global_shape[axis])
+        if checkpoint_dim == required_dim:
+            continue
+        unpadded_dim = required_dim - int(getattr(sharded_tensor, "gtp_pad_length", 0))
+        is_valid_padding = checkpoint_dim == unpadded_dim or (
+            pad_for_alignment > 1 and checkpoint_dim % pad_for_alignment == 0
+        )
+        sharded_tensor.allow_shape_mismatch = (
+            checkpoint_dim >= unpadded_dim and is_valid_padding
+        )
+
+
 def make_sharded_tensor_for_checkpoint(tensor, key, prepend_offsets=(), replica_id=None, **kwargs):
     """Helper for instantiating a non-sharded ShardedTensor (replicated across TP and DP group).
 
