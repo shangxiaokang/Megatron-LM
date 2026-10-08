@@ -39,11 +39,13 @@ from megatron.core.msc_utils import MultiStorageClientFeature, open_file
 from megatron.core.num_microbatches_calculator import update_num_microbatches
 from megatron.core.optimizer import DistributedOptimizer
 from megatron.core.rerun_state_machine import get_rerun_state_machine
+from megatron.core.tokenizers import MegatronTokenizer
 from megatron.core.utils import get_pg_rank, get_pg_size, unwrap_model
 
 from ..core.dist_checkpointing.utils import _clean_metadata_for_serialization
 from . import ft_integration, wandb_utils
 from .async_utils import get_save_and_finalize_callbacks, is_empty_async_queue, schedule_async_save
+from .config import TokenizerConfig
 from .global_vars import get_args
 from .one_logger_utils import on_save_checkpoint_start, on_save_checkpoint_success
 from .utils import append_to_progress_log, is_last_rank, print_rank_0
@@ -198,6 +200,114 @@ def ensure_directory_exists(filename, check_parent=True):
         msc.os.makedirs(dirname, exist_ok=True)
     else:
         os.makedirs(dirname, exist_ok=True)
+
+
+def save_tokenizer_assets(
+    tokenizer: MegatronTokenizer,
+    config: TokenizerConfig,
+    checkpoint_path: str,
+) -> None:
+    """Save tokenizer files below a checkpoint directory on rank zero.
+
+    Newer Megatron-Bridge releases use this API to make distributed
+    checkpoints self-contained. Hugging Face tokenizers provide their own
+    serializer; file-backed tokenizers copy the configured vocabulary assets.
+    ``NullTokenizer`` deliberately creates only the tokenizer directory.
+    """
+    if tokenizer is None:
+        return
+
+    rank = torch.distributed.get_rank() if torch.distributed.is_initialized() else 0
+    if rank != 0:
+        return
+
+    def resolve_path(path_str: str) -> str:
+        if not path_str:
+            return path_str
+        path = Path(path_str)
+        return str(path if path.is_absolute() else path.resolve())
+
+    try:
+        if MultiStorageClientFeature.is_enabled():
+            msc = MultiStorageClientFeature.import_package()
+            tokenizer_dir = msc.Path(checkpoint_path) / "tokenizer"
+            tokenizer_dir.mkdir(parents=True, exist_ok=True)
+            use_msc = True
+        else:
+            tokenizer_dir = os.path.join(checkpoint_path, "tokenizer")
+            os.makedirs(tokenizer_dir, exist_ok=True)
+            use_msc = False
+
+        tokenizer_type = config.tokenizer_type
+        if tokenizer_type in ("HuggingFaceTokenizer", "MultimodalTokenizer"):
+            if use_msc:
+                import tempfile
+
+                with tempfile.TemporaryDirectory() as temp_dir:
+                    if hasattr(tokenizer, "save_pretrained"):
+                        tokenizer.save_pretrained(temp_dir)
+                    elif hasattr(tokenizer, "_tokenizer") and hasattr(
+                        tokenizer._tokenizer, "save_pretrained"
+                    ):
+                        tokenizer._tokenizer.save_pretrained(temp_dir)
+                    else:
+                        logger.debug(
+                            "%s does not support save_pretrained(); skipping tokenizer assets",
+                            tokenizer_type,
+                        )
+                        return
+                    for filename in os.listdir(temp_dir):
+                        source = os.path.join(temp_dir, filename)
+                        if os.path.isfile(source):
+                            with open(source, "rb") as source_file:
+                                with msc.open(str(tokenizer_dir / filename), "wb") as destination:
+                                    destination.write(source_file.read())
+            elif hasattr(tokenizer, "save_pretrained"):
+                tokenizer.save_pretrained(tokenizer_dir)
+            elif hasattr(tokenizer, "_tokenizer") and hasattr(
+                tokenizer._tokenizer, "save_pretrained"
+            ):
+                tokenizer._tokenizer.save_pretrained(tokenizer_dir)
+            return
+
+        files_to_copy: list[tuple[str, str, str]] = []
+        if tokenizer_type in ("BertWordPieceLowerCase", "BertWordPieceCase"):
+            if config.vocab_file:
+                files_to_copy.append(("vocab_file", resolve_path(config.vocab_file), "vocab.txt"))
+        elif tokenizer_type == "GPT2BPETokenizer":
+            if config.vocab_file:
+                files_to_copy.append(("vocab_file", resolve_path(config.vocab_file), "vocab.json"))
+            if config.merge_file:
+                files_to_copy.append(("merge_file", resolve_path(config.merge_file), "merges.txt"))
+        elif tokenizer_type in (
+            "SentencePieceTokenizer",
+            "GPTSentencePieceTokenizer",
+            "Llama2Tokenizer",
+        ):
+            if config.tokenizer_model:
+                files_to_copy.append(
+                    ("tokenizer_model", resolve_path(config.tokenizer_model), "tokenizer.model")
+                )
+        elif tokenizer_type == "TikTokenizer" and config.tokenizer_model:
+            files_to_copy.append(
+                ("tokenizer_model", resolve_path(config.tokenizer_model), "tokenizer.json")
+            )
+        elif tokenizer_type == "NullTokenizer":
+            logger.debug("NullTokenizer requires no file artifacts")
+            return
+
+        for config_attr, source, destination_name in files_to_copy:
+            if not source or not os.path.exists(source):
+                logger.debug("%s not found at resolved path: %s", config_attr, source)
+                continue
+            if use_msc:
+                with open(source, "rb") as source_file:
+                    with msc.open(str(tokenizer_dir / destination_name), "wb") as destination:
+                        destination.write(source_file.read())
+            else:
+                shutil.copy2(source, os.path.join(tokenizer_dir, destination_name))
+    except Exception:
+        logger.exception("Failed to save tokenizer files")
 
 
 def get_checkpoint_name(
