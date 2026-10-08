@@ -202,7 +202,10 @@ def _ddp_oracle_worker(rank: int, port: int) -> None:
         for name in (dense_name, expert_name, ple_name):
             expected = reference_parameters[name].grad.float()
             actual = ddp_parameters[name].main_grad
-            assert expected.abs().sum() > 0, name
+            # A routed expert may receive no tokens in a small random batch.  Its
+            # zero gradient must still agree with the explicit EDP reduction.
+            if name != expert_name:
+                assert expected.abs().sum() > 0, name
             torch.testing.assert_close(actual, expected, rtol=0.03, atol=3e-4, msg=name)
 
         dense_bucket_parameters = {
