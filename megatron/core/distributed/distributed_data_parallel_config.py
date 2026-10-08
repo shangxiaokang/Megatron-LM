@@ -58,9 +58,10 @@ class DistributedDataParallelConfig:
     """If true, check for unexpectedly large gradients _before_ communication collective."""
 
     bucket_size: Optional[int] = None
-    """Maximum number of parameters in each bucket. If unspecified, MCore uses a default
-       value of max(40000000, 1000000 * dp_size) parameters (larger DP sizes need larger
-       buckets to ensure collectives do not become latency-bound)."""
+    """Maximum number of parameters in each bucket. If unspecified while overlapping gradient
+       reduction, MCore uses max(40000000, 1000000 * dp_size) parameters (larger DP sizes need
+       larger buckets to ensure collectives do not become latency-bound). Synchronous gradient
+       reduction uses a single bucket unless a finite bucket size is explicitly configured."""
 
     num_buckets: Optional[int] = None
     """Number of buckets for data-parallel communication. Should only specify one of

@@ -66,8 +66,7 @@ class DistributedDataParallel(_BaseDataParallel):
         ddp_config: DistributedDataParallel config object.
         module: Underlying model.
         disable_bucketing: If true, force assign all parameters to a single bucket. If false,
-            use standard bucketing policy: assign parameters to smaller buckets and all-reduce
-            per bucket _if_ overlap_grad_reduce is True and pp_rank is 0.
+            use the configured bucketing policy on pipeline rank 0.
         pg_collection: Optional unified process group for distributed training.
         full_param_layout: Optional FullParamLayout providing pre-computed layouts for all
             dtype groups. When provided, each buffer uses the corresponding PerBufferParamLayout
@@ -88,7 +87,7 @@ class DistributedDataParallel(_BaseDataParallel):
         if has_config_logger_enabled(config):
             log_config_to_disk(config, locals(), prefix=type(self).__name__)
 
-        # If bucket_size is not provided as an input, use sane default.
+        # If bucket_size is not provided for overlapping grad reduction, use a sane default.
         # If using very large dp_sizes, make buckets larger to ensure that chunks used in NCCL
         # ring-reduce implementations are large enough to remain bandwidth-bound rather than
         # latency-bound.
@@ -97,13 +96,15 @@ class DistributedDataParallel(_BaseDataParallel):
             pg_collection, config, ddp_config
         )
 
-        # If bucket_size is not provided as an input, use sane default based on dp_group size.
+        # If bucket_size is not provided for overlapping grad reduction, use a sane default
+        # based on dp_group size. Synchronous grad reduction keeps an unspecified bucket size at
+        # None (one bucket), while still honoring an explicitly configured finite bucket size.
         dp_group = process_group_dict['dp_group']
-        if ddp_config.bucket_size is None:
+        if ddp_config.num_buckets is not None and ddp_config.bucket_size is None:
+            num_parameters = sum(param.nelement() for param in module.parameters())
+            ddp_config.bucket_size = num_parameters // ddp_config.num_buckets
+        elif ddp_config.bucket_size is None and ddp_config.overlap_grad_reduce:
             ddp_config.bucket_size = max(40000000, 1000000 * dp_group.size())
-        # Set bucket_size to infinity if overlap_grad_reduce is False.
-        if not ddp_config.overlap_grad_reduce:
-            ddp_config.bucket_size = None
 
         self.ddp_config = ddp_config
         log_single_rank(

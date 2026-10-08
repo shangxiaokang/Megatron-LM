@@ -2764,17 +2764,18 @@ def update_train_iters(args):
 def resolve_ddp_bucket_size(ddp_config, dp_cp_group, overlap_grad_reduce, num_parameters):
     """Resolve the absolute DDP grad-bucket size.
 
-    With ``num_buckets`` set: ``num_parameters // num_buckets``; else if no explicit
-    ``bucket_size``: ``max(40_000_000, 1_000_000 * dp_cp_size)``; if ``overlap_grad_reduce``
-    is False: ``None`` (overrides the above).
+    With ``num_buckets`` set: ``num_parameters // num_buckets``; else use an explicit
+    ``bucket_size`` when provided. If neither is set, use
+    ``max(40_000_000, 1_000_000 * dp_cp_size)`` for overlapping grad reduction and a single
+    bucket (``None``) for synchronous grad reduction.
     """
     if ddp_config.num_buckets is not None:
         bucket_size = num_parameters // ddp_config.num_buckets
-    elif ddp_config.bucket_size is None:
+    elif ddp_config.bucket_size is not None:
+        bucket_size = ddp_config.bucket_size
+    elif overlap_grad_reduce:
         bucket_size = max(40000000, 1000000 * get_pg_size(dp_cp_group))
     else:
-        bucket_size = ddp_config.bucket_size
-    if not overlap_grad_reduce:
         bucket_size = None
     return bucket_size
 

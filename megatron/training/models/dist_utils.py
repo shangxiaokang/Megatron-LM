@@ -321,15 +321,12 @@ def _ddp_wrap(
             ddp_config.bucket_size = num_parameters // ddp_config.num_buckets
 
         # In the Megatron FSDP and DDP use path, we need to initialize the bucket size.
-        # If bucket_size is not provided as an input, use sane default.
+        # If bucket_size is not provided for overlapping grad reduction, use a sane default.
         # If using very large dp_sizes, make buckets larger to ensure that chunks used in NCCL
         # ring-reduce implementations are large enough to remain bandwidth-bound rather than
         # latency-bound.
-        if ddp_config.bucket_size is None:
+        if ddp_config.bucket_size is None and ddp_config.overlap_grad_reduce:
             ddp_config.bucket_size = max(40000000, 1000000 * pg_collection.dp_cp.size())
-        # Set bucket_size to infinity if overlap_grad_reduce is False.
-        if not ddp_config.overlap_grad_reduce:
-            ddp_config.bucket_size = None
 
     # DDP initialization is required to be on a side-stream for the full-iteration CUDA graph.
     #  this side-stream may be nested if being called from within the get_model function, but it

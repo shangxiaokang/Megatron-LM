@@ -1,5 +1,7 @@
 # Copyright (c) 2025, NVIDIA CORPORATION. All rights reserved.
 
+from unittest.mock import MagicMock, patch
+
 import pytest
 import torch
 from packaging import version
@@ -25,6 +27,62 @@ class TestModel(torch.nn.Module):
         x = self.activation(x)
         x = self.linear2(x)
         return x
+
+
+@pytest.mark.parametrize(
+    ("bucket_size", "num_buckets", "overlap_grad_reduce", "expected_bucket_size"),
+    [
+        (12_345, None, False, 12_345),
+        (None, 2, False, 3),
+        (None, None, False, None),
+        (None, None, True, 40_000_000),
+    ],
+)
+def test_ddp_bucket_size_resolution_on_cpu(
+    bucket_size, num_buckets, overlap_grad_reduce, expected_bucket_size
+):
+    """DDP preserves explicit synchronous buckets while retaining existing defaults."""
+    process_group = MagicMock()
+    process_group.size.return_value = 8
+    process_group.rank.return_value = 0
+    process_groups = {
+        "dp_group": process_group,
+        "dp_cp_group": process_group,
+        "intra_dp_cp_group": process_group,
+        "expt_dp_group": process_group,
+        "intra_expt_dp_group": process_group,
+        "tp_group": process_group,
+        "pp_group": process_group,
+        "ep_group": process_group,
+        "inter_dist_opt_group": None,
+    }
+    ddp_config = DistributedDataParallelConfig(
+        overlap_grad_reduce=overlap_grad_reduce, bucket_size=bucket_size, num_buckets=num_buckets
+    )
+    fake_buffer = MagicMock()
+    fake_buffer.buckets = []
+
+    with (
+        patch.object(
+            ProcessGroupCollection, "setup_process_groups_for_ddp", return_value=process_groups
+        ),
+        patch(
+            "megatron.core.distributed.distributed_data_parallel._ParamAndGradBuffer",
+            return_value=fake_buffer,
+        ) as mock_buffer,
+        patch(
+            "megatron.core.distributed.distributed_data_parallel.partition_buckets", return_value=[]
+        ),
+    ):
+        ddp = DistributedDataParallel(
+            TransformerConfig(num_attention_heads=1, num_layers=1),
+            ddp_config=ddp_config,
+            module=torch.nn.Linear(2, 2),
+        )
+
+    assert ddp_config.bucket_size == expected_bucket_size
+    assert ddp.bucket_size == expected_bucket_size
+    assert mock_buffer.call_args.args[5] == expected_bucket_size
 
 
 class TestDistributedDataParallel:

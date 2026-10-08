@@ -588,10 +588,34 @@ class TestDdpWrapBucketSize:
     @patch("torch.cuda.stream", new_callable=MagicMock)
     @patch("torch.cuda.current_stream")
     @patch("torch.cuda.Stream")
-    def test_overlap_grad_reduce_false_zeros_bucket_size(self, *_):
+    def test_sync_grad_reduce_preserves_explicit_bucket_size(self, *_):
         ddp_config = self._ddp_config(bucket_size=12345, overlap_grad_reduce=False)
         _ddp_wrap(self.model, False, ddp_config, False, pg_collection=self.pg)
+        assert ddp_config.bucket_size == 12345
+
+    @patch("megatron.training.models.dist_utils.DistributedDataParallel")
+    @patch("megatron.training.models.dist_utils.get_model_config")
+    @patch("torch.cuda.stream", new_callable=MagicMock)
+    @patch("torch.cuda.current_stream")
+    @patch("torch.cuda.Stream")
+    def test_sync_grad_reduce_without_bucket_size_uses_single_bucket(self, *_):
+        ddp_config = self._ddp_config(overlap_grad_reduce=False)
+        _ddp_wrap(self.model, False, ddp_config, False, pg_collection=self.pg)
         assert ddp_config.bucket_size is None
+
+    @patch("megatron.training.models.dist_utils.DistributedDataParallel")
+    @patch("megatron.training.models.dist_utils.get_model_config")
+    @patch("torch.cuda.stream", new_callable=MagicMock)
+    @patch("torch.cuda.current_stream")
+    @patch("torch.cuda.Stream")
+    def test_sync_grad_reduce_preserves_num_buckets(self, *_):
+        param = torch.zeros(100)
+        chunk = Mock()
+        chunk.parameters.return_value = [param]
+        chunk.modules.return_value = []
+        ddp_config = self._ddp_config(num_buckets=4, overlap_grad_reduce=False)
+        _ddp_wrap([chunk], False, ddp_config, False, pg_collection=self.pg)
+        assert ddp_config.bucket_size == 25
 
     @patch("megatron.training.models.dist_utils.TorchFullyShardedDataParallel")
     @patch("megatron.training.models.dist_utils.get_model_config")
@@ -647,13 +671,13 @@ class TestDdpWrapFullParamLayout:
     @patch("torch.cuda.stream", new_callable=MagicMock)
     @patch("torch.cuda.current_stream")
     @patch("torch.cuda.Stream")
-    def test_layout_passed_to_ddp_when_distributed_optimizer(
+    def test_sync_layout_passes_explicit_bucket_size_to_ddp(
         self, mock_stream, mock_curr, mock_ctx, mock_cfg, mock_ddp
     ):
         mock_ctx.return_value.__enter__ = Mock(return_value=None)
         mock_ctx.return_value.__exit__ = Mock(return_value=False)
         chunk, param = self._make_chunk_with_params()
-        ddp_config = self._ddp_config()
+        ddp_config = self._ddp_config(overlap_grad_reduce=False)
         _ddp_wrap([chunk], False, ddp_config, False, pg_collection=self.pg)
         self._opt.compute_full_param_layout.assert_called_once()
         # full_param_layout passed through to DDP construction.
@@ -662,6 +686,7 @@ class TestDdpWrapFullParamLayout:
         # and expert dp world size as a kwarg.
         layout_args = self._opt.compute_full_param_layout.call_args
         assert layout_args.args[0] == [param]
+        assert layout_args.args[1] == 8_000
         assert layout_args.args[2] == 4  # dp world size
         assert layout_args.args[3] is ddp_config
         assert layout_args.kwargs["expert_data_parallel_world_size"] == 2

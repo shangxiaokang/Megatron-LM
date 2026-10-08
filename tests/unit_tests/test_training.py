@@ -422,6 +422,46 @@ class TestGetModelBucketSizingPgCollection:
         assert pp_rank == 3
 
 
+class TestResolveDdpBucketSize:
+    """Host-only coverage for explicit and default synchronous DDP bucket sizing."""
+
+    def test_overlap_grad_reduce_without_bucket_configuration_uses_default(self):
+        ddp_config = SimpleNamespace(num_buckets=None, bucket_size=None)
+
+        bucket_size = training_module.resolve_ddp_bucket_size(
+            ddp_config, dp_cp_group=None, overlap_grad_reduce=True, num_parameters=100
+        )
+
+        assert bucket_size == 40_000_000
+
+    def test_sync_grad_reduce_preserves_explicit_bucket_size(self):
+        ddp_config = SimpleNamespace(num_buckets=None, bucket_size=40_000_000)
+
+        bucket_size = training_module.resolve_ddp_bucket_size(
+            ddp_config, dp_cp_group=None, overlap_grad_reduce=False, num_parameters=100
+        )
+
+        assert bucket_size == 40_000_000
+
+    def test_sync_grad_reduce_preserves_num_buckets(self):
+        ddp_config = SimpleNamespace(num_buckets=4, bucket_size=None)
+
+        bucket_size = training_module.resolve_ddp_bucket_size(
+            ddp_config, dp_cp_group=None, overlap_grad_reduce=False, num_parameters=100
+        )
+
+        assert bucket_size == 25
+
+    def test_sync_grad_reduce_without_bucket_configuration_uses_single_bucket(self):
+        ddp_config = SimpleNamespace(num_buckets=None, bucket_size=None)
+
+        bucket_size = training_module.resolve_ddp_bucket_size(
+            ddp_config, dp_cp_group=None, overlap_grad_reduce=False, num_parameters=100
+        )
+
+        assert bucket_size is None
+
+
 class TestSaveGrads:
     """Tests for the save_grads function."""
 
