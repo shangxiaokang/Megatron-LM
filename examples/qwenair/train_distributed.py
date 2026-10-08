@@ -253,10 +253,11 @@ def save_checkpoint(
     groups: QwenAirProcessGroups,
 ) -> None:
     """Save model shards and distributed Adam state with MCore DCP."""
-    if dist.get_rank() == 0 and checkpoint_dir.exists():
-        shutil.rmtree(checkpoint_dir)
+    if dist.get_rank() == 0:
+        if checkpoint_dir.exists():
+            shutil.rmtree(checkpoint_dir)
+        checkpoint_dir.mkdir(parents=True)
     dist.barrier()
-    checkpoint_dir.parent.mkdir(parents=True, exist_ok=True)
     dist_checkpointing.save(
         sharded_state_dict=_checkpoint_state(model, optimizer, groups, loading=False),
         checkpoint_dir=str(checkpoint_dir),
