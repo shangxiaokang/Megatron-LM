@@ -44,6 +44,8 @@ class QwenAirDecoderLayer(nn.Module):
         config: QwenAirTextConfig,
         layer_idx: int,
         ple_process_group: dist.ProcessGroup | None = None,
+        ep_group: dist.ProcessGroup | None = None,
+        expert_tp_group: dist.ProcessGroup | None = None,
     ) -> None:
         super().__init__()
         self.layer_type = config.layer_types[layer_idx]
@@ -51,7 +53,12 @@ class QwenAirDecoderLayer(nn.Module):
             self.linear_attn = QwenAirGatedDeltaNet(config, layer_idx)
         else:
             self.self_attn = QwenAirQSA(config, layer_idx)
-        self.mlp = QwenAirSparseMoeBlock(config)
+        if ep_group is None:
+            self.mlp = QwenAirSparseMoeBlock(config)
+        else:
+            from .moe_ep import QwenAirExpertParallelBlock
+
+            self.mlp = QwenAirExpertParallelBlock(config, ep_group, expert_tp_group)
         ple_layer_index = config.ple_layer_ids.index(layer_idx + 1) if layer_idx + 1 in config.ple_layer_ids else None
         self.ple = (
             QwenAirPLE(config, layer_idx, ple_layer_index, ple_process_group)
@@ -89,13 +96,17 @@ class QwenAirTextModel(nn.Module):
     """QwenAir text decoder with an HF-compatible logical state dict."""
 
     def __init__(
-        self, config: QwenAirTextConfig, ple_process_group: dist.ProcessGroup | None = None
+        self,
+        config: QwenAirTextConfig,
+        ple_process_group: dist.ProcessGroup | None = None,
+        ep_group: dist.ProcessGroup | None = None,
+        expert_tp_group: dist.ProcessGroup | None = None,
     ) -> None:
         super().__init__()
         self.config = config
         self.embed_tokens = nn.Embedding(config.vocab_size, config.hidden_size)
         self.layers = nn.ModuleList(
-            QwenAirDecoderLayer(config, idx, ple_process_group)
+            QwenAirDecoderLayer(config, idx, ple_process_group, ep_group, expert_tp_group)
             for idx in range(config.num_hidden_layers)
         )
         self.hyper_connection_mixer = QwenAirGatedResidual(config, use_combine=False)
@@ -183,12 +194,21 @@ class QwenAirForCausalLM(MegatronModule):
     """
 
     def __init__(
-        self, config: QwenAirTextConfig, ple_process_group: dist.ProcessGroup | None = None
+        self,
+        config: QwenAirTextConfig,
+        ple_process_group: dist.ProcessGroup | None = None,
+        ep_group: dist.ProcessGroup | None = None,
+        expert_tp_group: dist.ProcessGroup | None = None,
     ) -> None:
         super().__init__(config)
+        if (ep_group is None) != (expert_tp_group is None):
+            raise ValueError("QwenAir EP requires both ep_group and expert_tp_group")
+        if config.ple_layer_ids and ep_group is not None and ple_process_group is not ep_group:
+            raise NotImplementedError("QwenAir PLE and expert sharding currently require the same process group")
         self.ple_process_group = ple_process_group
-        self._check_single_rank_resources(config, ple_process_group)
-        self.model = QwenAirTextModel(config, ple_process_group)
+        self.ep_group = ep_group
+        self._check_single_rank_resources(config, ple_process_group, ep_group)
+        self.model = QwenAirTextModel(config, ple_process_group, ep_group, expert_tp_group)
         self.lm_head = nn.Linear(config.hidden_size, config.vocab_size, bias=False)
         self._initialize_weights(config)
         if config.tie_word_embeddings:
@@ -196,7 +216,9 @@ class QwenAirForCausalLM(MegatronModule):
 
     @staticmethod
     def _check_single_rank_resources(
-        config: QwenAirTextConfig, ple_process_group: dist.ProcessGroup | None = None
+        config: QwenAirTextConfig,
+        ple_process_group: dist.ProcessGroup | None = None,
+        ep_group: dist.ProcessGroup | None = None,
     ) -> None:
         """Refuse target-size allocation before materializing any giant tensor."""
         if config.ple_layer_ids:
@@ -220,28 +242,72 @@ class QwenAirForCausalLM(MegatronModule):
             config.num_hidden_layers * config.num_experts * 3
             * config.moe_intermediate_size * config.hidden_size
         )
+        if ep_group is not None:
+            if not dist.is_initialized() or config.num_experts % dist.get_world_size(ep_group):
+                raise ValueError("QwenAir EP requires an initialized group dividing the expert count")
+            expert_parameters //= dist.get_world_size(ep_group)
         if expert_parameters > config.max_single_rank_parameters:
             raise ValueError("QwenAir experts need distributed sharding before target-size construction")
 
     def sharded_state_dict(self, prefix="", sharded_offsets=(), metadata=None):
-        """Mark only PLE table rows as axis-0 shards in MCore checkpoints."""
-        if self.ple_process_group is None:
+        """Mark PLE rows and local expert rows as axis-0 MCore shards."""
+        if self.ple_process_group is None and self.ep_group is None:
             return super().sharded_state_dict(prefix, sharded_offsets, metadata)
         from megatron.core.transformer.utils import make_sharded_tensors_for_checkpoint
+
+        from .moe_ep import QwenAirExpertParallelBlock
 
         axis_map = {
             f"{name}.ngram_embedding.weight": 0
             for name, module in self.named_modules()
             if isinstance(module, QwenAirNGramEmbedding) and module.group_size > 1
         }
+        for name, module in self.named_modules():
+            if isinstance(module, QwenAirExpertParallelBlock):
+                axis_map[f"{name}.experts.gate_up_proj"] = 0
+                axis_map[f"{name}.experts.down_proj"] = 0
         return make_sharded_tensors_for_checkpoint(
             self.state_dict(prefix="", keep_vars=True),
             prefix,
             axis_map,
             sharded_offsets,
-            tp_group=self.ple_process_group,
+            tp_group=self.ep_group if self.ep_group is not None else self.ple_process_group,
             dp_cp_group=(metadata or {}).get("dp_cp_group"),
         )
+
+    def sync_ep_replicated_gradients(self) -> None:
+        """SUM replicated EP gradients once when not using MCore DDP.
+
+        Call only after backward in a standalone EP training loop. MCore DDP
+        must own this synchronization instead. Local PLE and expert shards are
+        deliberately excluded, and globally unused parameters keep grad=None.
+        """
+        if self.ep_group is None:
+            return
+        from .moe_ep import QwenAirExpertParallelBlock
+
+        local_shards = {
+            f"{name}.ngram_embedding.weight"
+            for name, module in self.named_modules()
+            if isinstance(module, QwenAirNGramEmbedding) and module.group_size > 1
+        }
+        for name, module in self.named_modules():
+            if isinstance(module, QwenAirExpertParallelBlock):
+                local_shards.update((
+                    f"{name}.experts.gate_up_proj", f"{name}.experts.down_proj",
+                ))
+        for name, parameter in self.named_parameters():
+            if name in local_shards:
+                continue
+            has_grad = torch.tensor(
+                int(parameter.grad is not None), device=parameter.device, dtype=torch.int32
+            )
+            dist.all_reduce(has_grad, group=self.ep_group)
+            if has_grad.item() == 0:
+                continue
+            if parameter.grad is None:
+                parameter.grad = torch.zeros_like(parameter)
+            dist.all_reduce(parameter.grad, group=self.ep_group)
 
     def _initialize_weights(self, config: QwenAirTextConfig) -> None:
         """Match HF zero-centered norms, linear initialization, and PLE zero conv."""
@@ -282,12 +348,27 @@ class QwenAirForCausalLM(MegatronModule):
             loss = F.cross_entropy(
                 shifted_logits.reshape(-1, shifted_logits.shape[-1]),
                 shifted_labels.reshape(-1), ignore_index=-100,
+                reduction="sum" if self.ep_group is not None else "mean",
             )
+            if self.ep_group is not None:
+                valid_labels = (shifted_labels != -100).sum().to(dtype=torch.float32)
+                dist.all_reduce(valid_labels, group=self.ep_group)
+                if valid_labels.item() == 0:
+                    raise ValueError("QwenAir EP loss requires at least one valid label")
+                loss = loss / valid_labels
         aux_loss = None
         if output_router_logits:
-            aux_loss = qwenair_global_router_loss(
-                router_logits, self.config.num_experts, self.config.num_experts_per_tok, attention_mask
-            )
+            if self.ep_group is None:
+                aux_loss = qwenair_global_router_loss(
+                    router_logits, self.config.num_experts, self.config.num_experts_per_tok, attention_mask
+                )
+            else:
+                from .moe_ep import qwenair_ep_router_loss
+
+                aux_loss = qwenair_ep_router_loss(
+                    router_logits, self.config.num_experts, self.config.num_experts_per_tok,
+                    self.ep_group, attention_mask,
+                )
             if loss is not None:
                 loss = loss + self.config.router_aux_loss_coef * aux_loss
         return QwenAirOutput(

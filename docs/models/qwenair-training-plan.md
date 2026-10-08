@@ -28,6 +28,10 @@
 
 Bridge 负责配置注册、模型实例化与 checkpoint 双向转换；本工作分支已把 MCore submodule pin 更新到 QwenAir 首次实现提交 `9af44dff`，并让该 submodule 指向 xshang fork。Bridge 的全局 TE pin 尚未改变；`te_reference` 需要单独安装或注入本次 TE fork 的 QSA API，不能把这种临时联调视为完整 TE fork 安装验证。TE 负责注意力算子的前反向和后续 Blackwell 优化，不承接模型配置或 indexer 选择。SGLang 的稀疏 kernel 仅有推理前向且数学/布局不完全相同，不能作为训练核直接复用。
 
+以完整模型约 177,392,830,576 参数计，单独 BF16 权重约 330.42 GiB、BF16 梯度约 330.42 GiB、两份 FP32 Adam 动量约 1321.68 GiB，合计约 1982.52 GiB（12 byte/参数）。这还不含 FP32 master weight、activation、通信缓冲和 checkpoint 峰值；理想平均分到 8 GPU 也约 247.81 GiB/GPU。目标训练必须有跨设备参数/梯度/优化器分片或 offload，并以实际 B200/B300 显存留出激活与通信空间。PLE 表单独约 95.37 GiB BF16，不能在每个 rank 全量复制。
+
+当前 `max_single_rank_parameters=100_000_000` 和 `max_single_rank_ple_elements=50_000_000` 是参考模型的安全限额，目标形状即便启用专家/PLE 分片仍会被拒绝。例如 512-way EP 时，仅 routed experts 平均每 rank 也约 236M 参数。真实配置必须先选定 TP/EP/PP、优化器分片与 checkpoint 策略，按实测显存显式提高限额；提高限额本身不代表已经具备内存可行性。
+
 ## 3. 分阶段开发
 
 ### A. 可复现语义和小模型训练
@@ -69,4 +73,6 @@ HF Qwen4Exp 的 hard top-k 没有 indexer 的 LM 梯度；其测试明确说明 
 - B300 双卡作业 `4799432` 中，PLE 2-rank 的变长查表、反向以及 MCore 分布式 checkpoint 实际写入/恢复 2/2 通过；CPU Gloo 对照亦通过。当前仅 PLE 表按行分片，专家并行、长上下文选择器与完整多模态训练尚未实现。
 - 新的 TE indexed SDPA 路径在 B300 上 51/51 定向用例通过，但 profiler 显示布尔选择 mask 令它回退到 PyTorch math SDPA，强制 FlashAttention 会拒绝非空 mask。因此该路径是功能验证方案，尚无目标上下文长度的吞吐/显存验收，不能作为生产稀疏 kernel。
 - B300 作业 `4800005` 对流式无 padding QSA 选择器、超出 dense 限额的 TE 路径及完整小文本 TE 训练共 3 项通过；作业 `4800095` 对 MCore 的 dense、TE gather 与 indexed SDPA 接线、视觉 `inputs_embeds`/原始 PLE ID 接口等 23 项 reference 回归通过。`te_indexed_sdpa` 仍需动态注入当前 TE fork 的 Python API，且实际 SDPA 后端为 math。
-- 独立 MoE EP 原型在 2×B300 NCCL 作业 `4800048` 3/3 通过，覆盖 MCore all-to-all dispatcher、局部 packed experts、router/shared 梯度、全局 aux 和分布式 checkpoint；它尚未接入完整文本模型或真实规模训练。
+- 独立 MoE EP 模块在 2×B300 NCCL 作业 `4800048` 3/3 通过，覆盖 MCore all-to-all dispatcher、局部 packed experts、router/shared 梯度、全局 aux 和分布式 checkpoint。
+- 2×B300 NCCL 作业 `4800461` 中，完整小文本模型已联合 PLE 行分片与 MoE expert parallel 完成 1/1 端到端测试：GDN/QSA/HC、变长 rank-local token、全局 CE 与 router aux、与未分片参考的逐参数梯度/更新，以及模型 DCP 加 rank-local AdamW 状态的第二步 BF16 精确重放。此实现要求 PLE 与 EP 使用同一进程组，expert TP=1；复制参数由原型训练循环显式 SUM 梯度。大规模 DDP/优化器分片及 grouped expert GEMM 尚未接入。
+- B300 作业 `4800570` 在 EP 接线后重新执行单卡 reference/TE/indexed SDPA 回归 23/23 通过；作业 `4800615` 的独立双卡 MoE 测试 3/3 通过，包含一个 rank 没有本地 token 时的 all-to-all 与梯度对照。完整文本模型仍要求训练器为每 rank 提供非空 local batch；batch=0 的全模型路径尚未验收。

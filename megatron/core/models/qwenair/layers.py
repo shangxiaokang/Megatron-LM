@@ -201,16 +201,19 @@ class QwenAirMLP(nn.Module):
 
 
 class QwenAirExperts(nn.Module):
-    """Packed routed experts with sparse token dispatch on one rank."""
+    """Packed routed experts, with optional local-only expert allocation."""
 
-    def __init__(self, config: QwenAirTextConfig) -> None:
+    def __init__(self, config: QwenAirTextConfig, num_local_experts: int | None = None) -> None:
         super().__init__()
         self.intermediate_dim = config.moe_intermediate_size
+        expert_count = config.num_experts if num_local_experts is None else num_local_experts
+        if expert_count < 1 or expert_count > config.num_experts:
+            raise ValueError("num_local_experts must be between 1 and num_experts")
         self.gate_up_proj = nn.Parameter(
-            torch.empty(config.num_experts, 2 * self.intermediate_dim, config.hidden_size)
+            torch.empty(expert_count, 2 * self.intermediate_dim, config.hidden_size)
         )
         self.down_proj = nn.Parameter(
-            torch.empty(config.num_experts, config.hidden_size, self.intermediate_dim)
+            torch.empty(expert_count, config.hidden_size, self.intermediate_dim)
         )
         nn.init.normal_(self.gate_up_proj, std=config.initializer_range)
         nn.init.normal_(self.down_proj, std=config.initializer_range)
@@ -228,6 +231,27 @@ class QwenAirExperts(nn.Module):
             contribution = expert_output * scores[token_idx, slot_idx].unsqueeze(-1)
             result.index_add_(0, token_idx, contribution.to(result.dtype))
         return result
+
+    def forward_dispatched(
+        self, hidden: Tensor, tokens_per_expert: Tensor, scores: Tensor
+    ) -> Tensor:
+        """Apply contiguous local experts to MCore's expert-sorted token batches."""
+        expert_count = self.gate_up_proj.shape[0]
+        if tokens_per_expert.numel() != expert_count or scores.numel() != hidden.shape[0]:
+            raise ValueError("Dispatched QwenAir expert tokens or scores have the wrong shape")
+        counts = tokens_per_expert.tolist()
+        if sum(counts) != hidden.shape[0]:
+            raise ValueError("Dispatched token counts do not sum to input rows")
+        pieces = []
+        offset = 0
+        for expert, count in enumerate(counts):
+            source = hidden.narrow(0, offset, count)
+            gate, up = F.linear(source, self.gate_up_proj[expert]).chunk(2, dim=-1)
+            expert_output = F.linear(F.silu(gate) * up, self.down_proj[expert])
+            weighted = expert_output * scores.reshape(-1)[offset : offset + count].unsqueeze(-1)
+            pieces.append(weighted.to(hidden.dtype))
+            offset += count
+        return torch.cat(pieces, dim=0)
 
 
 class QwenAirTopKRouter(nn.Module):
@@ -269,10 +293,10 @@ class QwenAirSparseMoeBlock(nn.Module):
         return (shared + routed).reshape(shape), logits
 
 
-def qwenair_global_router_loss(
+def _qwenair_router_statistics(
     router_logits: tuple[Tensor, ...], num_experts: int, top_k: int, token_mask: Tensor | None = None
-) -> Tensor:
-    """Compute Qwen's auxiliary load balancing loss across all decoder layers."""
+) -> tuple[Tensor, Tensor, Tensor]:
+    """Accumulate Qwen's per-expert hard counts and differentiable soft mass."""
     if not router_logits:
         raise ValueError("At least one router layer is required")
     count = torch.zeros(num_experts, device=router_logits[0].device, dtype=torch.float32)
@@ -290,6 +314,16 @@ def qwenair_global_router_loss(
             count.scatter_add_(0, selected.flatten(), mask.repeat_interleave(top_k))
             probabilities = probabilities + (probs * mask.unsqueeze(-1)).sum(dim=0)
             total_rows = total_rows + mask.sum()
+    return count, probabilities, total_rows
+
+
+def qwenair_global_router_loss(
+    router_logits: tuple[Tensor, ...], num_experts: int, top_k: int, token_mask: Tensor | None = None
+) -> Tensor:
+    """Compute Qwen's auxiliary load balancing loss across all decoder layers."""
+    count, probabilities, total_rows = _qwenair_router_statistics(
+        router_logits, num_experts, top_k, token_mask
+    )
     if total_rows.item() == 0:
         raise ValueError("Router auxiliary loss requires at least one valid token")
     return num_experts * ((count / total_rows) * (probabilities / total_rows)).sum()
