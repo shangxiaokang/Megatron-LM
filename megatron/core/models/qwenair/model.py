@@ -175,10 +175,10 @@ class QwenAirTextModel(nn.Module):
         cos, sin = qwenair_rope(self.config, position_ids, self.embed_tokens.weight.dtype)
         if cos.shape[:2] != (batch, length):
             raise ValueError("position_ids must match input_ids")
-        if self.config.qsa_backend in ("te_reference", "te_indexed_sdpa"):
+        if self.config.qsa_backend in ("te_reference", "te_indexed_sdpa", "te_triton"):
             if attention_mask is not None and not torch.all(token_mask):
                 raise NotImplementedError(
-                    "TE QSA reference requires unpacked, unpadded causal sequences"
+                    "TE QSA requires unpacked, unpadded causal sequences"
                 )
             visible = None
         else:

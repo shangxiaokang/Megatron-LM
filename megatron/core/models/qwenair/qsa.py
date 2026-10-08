@@ -234,23 +234,27 @@ class QwenAirQSA(nn.Module):
             self.k_norm(self.k_proj(hidden).reshape(batch, length, self.num_kv_heads, self.head_dim)), cos, sin
         )
         value = self.v_proj(hidden).reshape(batch, length, self.num_kv_heads, self.head_dim)
-        if self.backend in ("te_reference", "te_indexed_sdpa"):
+        if self.backend in ("te_reference", "te_indexed_sdpa", "te_triton"):
             if self.compress_ratio != 4:
-                raise NotImplementedError("TE QSA reference requires four-token compression")
+                raise NotImplementedError("TE QSA requires four-token compression")
             if self.training and self.attention_dropout:
-                raise NotImplementedError("TE QSA reference does not support attention dropout")
+                raise NotImplementedError("TE QSA does not support attention dropout")
             if query.dtype not in (torch.bfloat16, torch.float32):
-                raise NotImplementedError("TE QSA reference requires BF16 or FP32 inputs")
+                raise NotImplementedError("TE QSA requires BF16 or FP32 inputs")
             if visible is not None:
                 full_causal = torch.ones(length, length, dtype=torch.bool, device=hidden.device).tril()
                 if not torch.equal(visible, full_causal.unsqueeze(0).expand(batch, -1, -1)):
-                    raise NotImplementedError("TE QSA reference requires unpacked, unpadded causal sequences")
+                    raise NotImplementedError("TE QSA requires unpacked, unpadded causal sequences")
             valid = selected.block_starts >= 0
             if torch.any(valid & (selected.block_starts % 4 != 0)):
-                raise NotImplementedError("TE QSA reference requires physical four-token block alignment")
+                raise NotImplementedError("TE QSA requires physical four-token block alignment")
             selected_blocks = torch.where(valid, selected.block_starts // 4, -1)
             try:
-                if self.backend == "te_indexed_sdpa":
+                if self.backend == "te_triton":
+                    from transformer_engine.pytorch import (
+                        qsa_triton_attention as attention_op,
+                    )
+                elif self.backend == "te_indexed_sdpa":
                     from transformer_engine.pytorch import (
                         qsa_indexed_sdpa_attention as attention_op,
                     )
@@ -273,9 +277,12 @@ class QwenAirQSA(nn.Module):
                     raise TypeError(
                         "TE QSA requires matching Q/K/V dtypes after exact BF16 V promotion"
                     )
-            output = attention_op(
-                query, key, value, selected_blocks, scale=self.head_dim**-0.5
-            )
+            attention_kwargs = {"scale": self.head_dim**-0.5}
+            if self.backend == "te_triton":
+                # The indices are produced by the local causal selector above.
+                # Skip TE's synchronizing sort/range check on every layer.
+                attention_kwargs["validate_indices"] = False
+            output = attention_op(query, key, value, selected_blocks, **attention_kwargs)
         else:
             if selected.token_mask is None:
                 raise ValueError("Dense QSA requires an explicit selected token mask")

@@ -381,7 +381,9 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config-json", type=Path)
     parser.add_argument("--expert-model-parallel-size", type=int, default=2)
-    parser.add_argument("--qsa-backend", choices=("dense", "te_reference", "te_indexed_sdpa"))
+    parser.add_argument(
+        "--qsa-backend", choices=("dense", "te_reference", "te_indexed_sdpa", "te_triton")
+    )
     parser.add_argument("--max-single-rank-ple-elements", type=int)
     parser.add_argument("--max-single-rank-parameters", type=int)
     parser.add_argument("--micro-batch-size", type=int, default=1)

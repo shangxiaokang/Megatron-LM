@@ -359,7 +359,7 @@ def test_qsa_te_reference_matches_dense_outputs_and_gradients(backend):
         te(te_input, cos, sin, padded)
 
 
-@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa"])
+@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa", "te_triton"])
 def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast(backend):
     """FP32 score accumulation survives CUDA autocast in both QSA paths."""
     pytest.importorskip("transformer_engine.pytorch")
@@ -401,7 +401,7 @@ def test_qsa_te_reference_matches_dense_with_cuda_bf16_autocast(backend):
         torch.backends.cuda.matmul.allow_tf32 = old_tf32
 
 
-@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa"])
+@pytest.mark.parametrize("backend", ["te_reference", "te_indexed_sdpa", "te_triton"])
 def test_full_text_te_reference_trains_with_fp32_weights_and_bf16_autocast(backend):
     """RoPE-promoted FP32 Q/K and BF16 V keep exact TE input dtype handling."""
     pytest.importorskip("transformer_engine.pytorch")
