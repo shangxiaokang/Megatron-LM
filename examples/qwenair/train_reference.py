@@ -61,7 +61,7 @@ def training_step(
     optimizer: torch.optim.Optimizer,
     tokens: torch.Tensor,
     device: torch.device,
-) -> tuple[float, dict[str, float]]:
+) -> tuple[float, dict[str, float], dict[str, torch.Tensor]]:
     """Take an optimizer step and check every implemented module gets gradients."""
     optimizer.zero_grad(set_to_none=True)
     with torch.autocast(device_type=device.type, dtype=torch.bfloat16, enabled=device.type == "cuda"):
@@ -79,16 +79,18 @@ def training_step(
         "head": "lm_head.weight",
     }
     norms = {}
+    gradient_snapshots = {}
     for module, name in required.items():
         grad = parameters[name].grad
         if grad is None or not torch.isfinite(grad).all():
             raise AssertionError(f"{module} has no finite gradient: {name}")
         norms[module] = float(grad.float().norm().item())
+        gradient_snapshots[module] = grad.detach().clone()
     indexer = parameters["model.layers.3.self_attn.indexer.index_qk_proj.weight"]
     if indexer.grad is not None:
         raise AssertionError("hard top-k indexer unexpectedly received an LM gradient")
     optimizer.step()
-    return float(output.loss.detach().item()), norms
+    return float(output.loss.detach().item()), norms, gradient_snapshots
 
 
 def main() -> None:
@@ -116,20 +118,29 @@ def main() -> None:
         checkpoint_dir = args.checkpoint_dir
         checkpoint_dir.mkdir(parents=True, exist_ok=True)
     try:
-        first_loss, first_norms = training_step(model, optimizer, batches[0], device)
+        first_loss, first_norms, _ = training_step(model, optimizer, batches[0], device)
         checkpoint = checkpoint_dir / "step_1.pt"
         torch.save({"model": model.state_dict(), "optimizer": optimizer.state_dict()}, checkpoint)
-        second_loss, second_norms = training_step(model, optimizer, batches[1], device)
+        second_loss, second_norms, second_gradients = training_step(model, optimizer, batches[1], device)
 
         restored = QwenAirForCausalLM(config).to(device).train()
         restored_optimizer = torch.optim.AdamW(restored.parameters(), lr=0.001)
-        saved = torch.load(checkpoint, map_location=device, weights_only=True)
+        # Keep AdamW's scalar step counters on CPU, as in the live optimizer.
+        # load_state_dict moves moment tensors to their parameter devices.
+        saved = torch.load(checkpoint, map_location="cpu", weights_only=True)
         restored.load_state_dict(saved["model"], strict=True)
         restored_optimizer.load_state_dict(saved["optimizer"])
-        replay_loss, replay_norms = training_step(restored, restored_optimizer, batches[1], device)
+        replay_loss, replay_norms, replay_gradients = training_step(
+            restored, restored_optimizer, batches[1], device
+        )
         torch.testing.assert_close(torch.tensor(second_loss), torch.tensor(replay_loss), rtol=0, atol=0)
+        for module, gradient in second_gradients.items():
+            torch.testing.assert_close(gradient, replay_gradients[module], rtol=0, atol=0, msg=module)
         for key, tensor in model.state_dict().items():
             torch.testing.assert_close(tensor, restored.state_dict()[key], rtol=0, atol=0, msg=key)
+        torch.testing.assert_close(
+            optimizer.state_dict(), restored_optimizer.state_dict(), rtol=0, atol=0
+        )
         if not all(value > 0 for value in first_norms.values()):
             raise AssertionError("a module had zero gradient in the first step")
         print(json.dumps({

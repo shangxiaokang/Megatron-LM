@@ -26,7 +26,7 @@
 | MTP | 声明 1 层 QSA+MoE、无 dedicated embedding | 结构与训练目标分开；在训练 shift、loss 系数、共享规则得到权威定义前不得把通用 MCore MTP 默认行为称为 QwenAir 等价。 |
 | Vision | 27 层、H=1152、16 heads、patch 2×16×16、merge 2×2 | 后续从 Qwen VL 路径适配，逐层核对 patch/position/merge 与文本注入，再做图像和视频训练。 |
 
-Bridge 负责配置注册、模型实例化与 checkpoint 双向转换；它的当前 MCore pin 是 `5052ce8c…`，与本次独立 MCore 基线不同。Bridge 集成前须明确更新 pin 与依赖锁，并复跑所有测试。TE 负责注意力算子的前反向和后续 Blackwell 优化，不承接模型配置或 indexer 选择。SGLang 的稀疏 kernel 仅有推理前向且数学/布局不完全相同，不能作为训练核直接复用。
+Bridge 负责配置注册、模型实例化与 checkpoint 双向转换；本工作分支已把 MCore submodule pin 更新到 QwenAir 首次实现提交 `9af44dff`，并让该 submodule 指向 xshang fork。Bridge 的全局 TE pin 尚未改变；`te_reference` 需要单独安装或注入本次 TE fork 的 QSA API，不能把这种临时联调视为完整 TE fork 安装验证。TE 负责注意力算子的前反向和后续 Blackwell 优化，不承接模型配置或 indexer 选择。SGLang 的稀疏 kernel 仅有推理前向且数学/布局不完全相同，不能作为训练核直接复用。
 
 ## 3. 分阶段开发
 
@@ -59,3 +59,12 @@ HF Qwen4Exp 的 hard top-k 没有 indexer 的 LM 梯度；其测试明确说明 
 每个阶段保存：三仓库 commit、依赖 lock/container digest、完整 Slurm 命令及作业 ID、输入与 fixture hash、每 rank 日志、数值比较、grad 检查、optimizer step、checkpoint restart 与显存/性能结果。测试失败需定位首个非 NCCL traceback，再修正实现并重跑相关门槛。先在单卡 B200/B300 完成功能验证，再扩展到 8 卡和多节点。
 
 各仓库各自提交最小可审查改动并推送 `git@github.com:shangxiaokang/{Megatron-LM,Megatron-Bridge,TransformerEngine}.git` 的工作分支。Megatron-LM 提交按仓库要求同时使用 `-s -S`；对应代码与测试在各自仓库内，避免把参考仓库的已有本地改动混入提交。最终完成状态以运行证据与上述所有门槛为准。
+
+## 5. 当前实测进度（2026-10-08）
+
+- 冻结 HF 的 HC、PLE、GDN、QSA 前向与 MCore 小模型进行独立权重/输出对照；目标文本参数数目及 PLE hash 与静态 oracle 一致。此项不代替完整模型的梯度 golden。
+- B300 上使用 PyTorch `2.9.0a0+145a3a7bda.nv25.10`、CUDA 13.0 与 NVRX 0.6.0：MCore 初始单卡 12 项、TE 原始 QSA 134 项、后续 TE 全部定向 188 项以及 MCore↔TE 接口 3 项测试通过。TE FP32 严格对照需要在完整前向和反向期间禁用 TF32；BF16 仍可运行。
+- B300 SXM6 AC 作业 `4799604` 中，`examples/qwenair/train_reference.py` 已用 dense 和 `te_reference` 各完成两个 BF16 autocast/AdamW 步骤。每个已实现的主干模块均有非零有限梯度；checkpoint 恢复后第二步 loss、所检查参数的梯度、模型权重与 AdamW 状态逐项完全重放。hard top-k indexer 的 LM 梯度为空符合当前公开实现，但独立训练目标未定义。
+- 该集群镜像中的 TE 原生扩展早于本次 TE fork；联调通过绝对路径加载新的纯 Python QSA 函数并注入镜像内已安装的 TE 包。必须用匹配的扩展重建或更新镜像，才能称为 TE fork 整包验证。
+- B300 双卡作业 `4799432` 中，PLE 2-rank 的变长查表、反向以及 MCore 分布式 checkpoint 实际写入/恢复 2/2 通过；CPU Gloo 对照亦通过。当前仅 PLE 表按行分片，专家并行、长上下文选择器与完整多模态训练尚未实现。
+- 新的 TE indexed SDPA 路径在 B300 上 51/51 定向用例通过，但 profiler 显示布尔选择 mask 令它回退到 PyTorch math SDPA，强制 FlashAttention 会拒绝非空 mask。因此该路径是功能验证方案，尚无目标上下文长度的吞吐/显存验收，不能作为生产稀疏 kernel。
