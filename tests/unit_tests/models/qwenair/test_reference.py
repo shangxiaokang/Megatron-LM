@@ -2,6 +2,9 @@
 
 """QwenAir text topology, selection, and differentiable training tests."""
 
+import math
+from copy import deepcopy
+
 import pytest
 import torch
 
@@ -59,6 +62,8 @@ def test_target_config_preserves_48_layer_schedule():
                 "layer_types": (["linear_attention"] * 3 + ["full_attention"]) * 12,
                 "ple_layer_ids": [2],
                 "mtp_num_hidden_layers": 1,
+                "mamba_ssm_dtype": "float32",
+                "split_ngram_parts": 128,
             }
         }
     )
@@ -67,6 +72,14 @@ def test_target_config_preserves_48_layer_schedule():
     assert config.layer_types[3::4] == ["qwen_sparse_attention"] * 12
     assert config.ple_layer_ids == [2]
     assert config.rotary_dim == 64
+    assert config.mamba_ssm_dtype == "float32"
+    assert config.split_ngram_parts == 128
+
+
+def test_target_config_rejects_non_fp32_gdn_state_contract():
+    """The canonical GDN state contract cannot be silently weakened."""
+    with pytest.raises(ValueError, match="mamba_ssm_dtype=float32"):
+        tiny_config(mamba_ssm_dtype="bfloat16")
 
 
 def test_qsa_selection_is_causal_and_keeps_incomplete_tail():
@@ -262,6 +275,88 @@ def test_tiny_text_training_with_cuda_bf16_autocast():
             optimizer.step()
     finally:
         torch.backends.cuda.matmul.allow_tf32 = old_tf32
+
+
+def test_qwenair_fla_gdn_matches_token_reference_with_cuda_bf16(monkeypatch: pytest.MonkeyPatch):
+    """The training FLA path preserves QwenAir GDN outputs and gradients."""
+    from megatron.core.models.qwenair import layers as qwenair_layers
+
+    if not torch.cuda.is_available():
+        pytest.skip("CUDA is required for the BF16 FLA comparison")
+    if not qwenair_layers.HAVE_FLA or qwenair_layers.chunk_gated_delta_rule is None:
+        pytest.skip("The FLA gated-delta kernel is unavailable")
+
+    torch.manual_seed(67)
+    config = tiny_config(num_hidden_layers=1, layer_types=["linear_attention"], ple_layer_ids=[])
+    kernel_layer = qwenair_layers.QwenAirGatedDeltaNet(config, layer_idx=0).cuda()
+    reference_layer = deepcopy(kernel_layer)
+    kernel_input = torch.randn(2, 13, config.hidden_size, device="cuda", requires_grad=True)
+    reference_input = kernel_input.detach().clone().requires_grad_(True)
+    token_mask = torch.tensor(
+        [[True] * 13, [True] * 9 + [False] * 4],
+        device="cuda",
+    )
+
+    kernel_calls = 0
+    kernel = qwenair_layers.chunk_gated_delta_rule
+
+    def counted_kernel(*args, **kwargs):
+        nonlocal kernel_calls
+        kernel_calls += 1
+        return kernel(*args, **kwargs)
+
+    monkeypatch.setattr(qwenair_layers, "chunk_gated_delta_rule", counted_kernel)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        kernel_output = kernel_layer(kernel_input, token_mask=token_mask)
+    assert kernel_calls == 1
+    monkeypatch.setattr(qwenair_layers, "HAVE_FLA", False)
+    with torch.autocast("cuda", dtype=torch.bfloat16):
+        reference_output = reference_layer(reference_input, token_mask=token_mask)
+
+    def assert_relative_l2(actual: torch.Tensor, expected: torch.Tensor, name: str) -> None:
+        difference = (actual.float() - expected.float()).norm()
+        relative_l2 = difference / expected.float().norm().clamp_min(1e-12)
+        assert relative_l2 < 8e-2, f"{name} relative L2 error is {relative_l2.item():.6f}"
+
+    torch.testing.assert_close(kernel_output, reference_output, atol=5e-2, rtol=5e-2)
+    assert_relative_l2(kernel_output, reference_output, "output")
+    grad_generator = torch.Generator(device="cuda").manual_seed(73)
+    grad_output = torch.randn(
+        kernel_output.shape,
+        device=kernel_output.device,
+        dtype=kernel_output.dtype,
+        generator=grad_generator,
+    ) / math.sqrt(kernel_output.numel())
+    kernel_output.backward(grad_output)
+    reference_output.backward(grad_output)
+    torch.testing.assert_close(kernel_input.grad, reference_input.grad, atol=6e-2, rtol=6e-2)
+    assert_relative_l2(kernel_input.grad, reference_input.grad, "input gradient")
+    reference_parameters = dict(reference_layer.named_parameters())
+    for name, parameter in kernel_layer.named_parameters():
+        assert parameter.grad is not None and torch.isfinite(parameter.grad).all(), name
+        reference_gradient = reference_parameters[name].grad
+        assert reference_gradient is not None and torch.isfinite(reference_gradient).all(), name
+        torch.testing.assert_close(parameter.grad, reference_gradient, atol=8e-2, rtol=8e-2)
+        assert_relative_l2(parameter.grad, reference_gradient, f"{name} gradient")
+
+
+def test_required_fused_gdn_fails_instead_of_silently_using_token_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+):
+    """A target run cannot accidentally use the reference token recurrence."""
+    from megatron.core.models.qwenair import layers as qwenair_layers
+
+    config = tiny_config(
+        num_hidden_layers=1,
+        layer_types=["linear_attention"],
+        ple_layer_ids=[],
+        require_fused_gdn=True,
+    )
+    layer = qwenair_layers.QwenAirGatedDeltaNet(config, layer_idx=0)
+    monkeypatch.setattr(qwenair_layers, "HAVE_FLA", False)
+
+    with pytest.raises(RuntimeError, match="requires the FLA chunk gated-delta kernel"):
+        layer(torch.randn(1, 3, config.hidden_size))
 
 
 def test_cross_layer_auxiliary_uses_all_router_logits():

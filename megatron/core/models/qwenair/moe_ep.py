@@ -16,6 +16,7 @@ from torch.nn import functional as F
 
 from .config import QwenAirTextConfig
 from .layers import QwenAirExperts, QwenAirMLP, QwenAirTopKRouter, _qwenair_router_statistics
+from .moe_grouped import QwenAirDispatchedExpertBackend
 
 
 def qwenair_ep_router_loss(
@@ -135,8 +136,22 @@ class QwenAirExpertParallelBlock(nn.Module):
         # over the expert-data-parallel group supplied to DDP by the trainer.
         for parameter in self.experts.parameters():
             setattr(parameter, "allreduce", self.ep_size == 1)
+        self._expert_backend = QwenAirDispatchedExpertBackend(
+            self.experts, config.moe_expert_backend
+        )
+        self._expert_backend.prepare_after_module_apply()
         self.shared_expert = QwenAirMLP(config)
         self.shared_expert_gate = nn.Linear(config.hidden_size, 1, bias=False)
+
+    def _apply(self, fn, recurse=True):
+        """Move parameters before preparing TE's unregistered grouped op shells."""
+        backend = getattr(self, "_expert_backend", None)
+        if backend is not None:
+            backend.invalidate_for_module_apply()
+        module = super()._apply(fn, recurse=recurse)
+        if backend is not None:
+            backend.prepare_after_module_apply()
+        return module
 
     def forward(self, hidden: Tensor) -> tuple[Tensor, Tensor]:
         """Route local token rows to owners and combine routed plus shared output."""
@@ -158,7 +173,7 @@ class QwenAirExpertParallelBlock(nn.Module):
         local_hidden, counts, local_scores = self.token_dispatcher.dispatch_postprocess(
             dispatched, dispatched_scores
         )
-        local_output = self.experts.forward_dispatched(local_hidden, counts, local_scores)
+        local_output = self._expert_backend(local_hidden, counts, local_scores)
         local_output = self.token_dispatcher.combine_preprocess(local_output)
         local_output = self.token_dispatcher.token_combine(local_output)
         routed = self.token_dispatcher.combine_postprocess(local_output)

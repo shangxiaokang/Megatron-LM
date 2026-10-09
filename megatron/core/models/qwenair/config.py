@@ -38,12 +38,19 @@ class QwenAirTextConfig:
     linear_value_head_dim: int = 128
     linear_num_key_heads: int = 16
     linear_num_value_heads: int = 48
+    # The canonical HF config requires FP32 temporal/cache state semantics.
+    # Fused training kernels may internally store chunk-boundary tensors in the
+    # activation dtype while accumulating the recurrence in FP32.
+    mamba_ssm_dtype: str = "float32"
     moe_intermediate_size: int = 640
     shared_expert_intermediate_size: int = 640
     num_experts: int = 512
     num_experts_per_tok: int = 10
     norm_topk_prob: bool = True
     router_aux_loss_coef: float = 0.001
+    # The TE backend is opt-in until its ragged single-weight path is validated
+    # on the target training platform.  The loop remains the correctness oracle.
+    moe_expert_backend: str = "loop"
     hc_count: int = 4
     hc_lowrank: int = 320
     ple_layer_ids: list[int] = field(default_factory=lambda: [2])
@@ -53,6 +60,9 @@ class QwenAirTextConfig:
     heads_per_ngram: int = 8
     ngram_vocab_size_base: int = 20_000_000
     make_ngram_vocab_size_divisible_by: int = 128
+    # Physical HF checkpoint shard count. It does not change runtime PLE
+    # geometry, but retaining it prevents config round-trips from drifting.
+    split_ngram_parts: int = 128
     seed: int = 1234
     indexer_n_heads: int = 4
     indexer_kv_heads: int = 1
@@ -61,6 +71,10 @@ class QwenAirTextConfig:
     indexer_compress_ratio: int = 4
     output_gate_type: str = "sigmoid"
     qsa_backend: str = "dense"
+    # Runtime safety switch used by target-size recipes. Small CPU/reference
+    # tests may use the token recurrence, while full training must fail rather
+    # than silently select that memory- and launch-bound fallback.
+    require_fused_gdn: bool = False
     rope_theta: float = 10_000_000.0
     partial_rotary_factor: float = 0.25
     mrope_section: tuple[int, int, int] = (11, 11, 10)
@@ -158,6 +172,7 @@ class QwenAirTextConfig:
             self.ple_conv_kernel_size,
             self.ngram_vocab_size_base,
             self.make_ngram_vocab_size_divisible_by,
+            self.split_ngram_parts,
         )
         if any(value <= 0 for value in positive):
             raise ValueError("QwenAir dimensions and resource limits must be positive")
@@ -176,8 +191,12 @@ class QwenAirTextConfig:
             raise ValueError("mrope_section must partition the rotary dimension into three axes")
         if self.output_gate_type != "sigmoid":
             raise ValueError("Only the QwenAir sigmoid output gate is supported")
+        if self.mamba_ssm_dtype != "float32":
+            raise ValueError("QwenAir requires mamba_ssm_dtype=float32")
         if self.hidden_act != "silu":
             raise ValueError("Only the QwenAir SiLU activation is supported")
+        if self.moe_expert_backend not in ("loop", "te_grouped"):
+            raise ValueError("moe_expert_backend must be 'loop' or 'te_grouped'")
         if self.qsa_backend not in ("dense", "te_reference", "te_indexed_sdpa", "te_triton"):
             raise ValueError(
                 "qsa_backend must be 'dense', 'te_reference', 'te_indexed_sdpa', or 'te_triton'"

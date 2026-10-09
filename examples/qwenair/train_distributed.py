@@ -81,16 +81,28 @@ def tiny_config(expert_model_parallel_size: int, qsa_backend: str) -> QwenAirTex
 def load_config(args: argparse.Namespace) -> QwenAirTextConfig:
     """Load the frozen HF config or the built-in multi-GPU test geometry."""
     if args.config_json is None:
-        return tiny_config(args.expert_model_parallel_size, args.qsa_backend or "dense")
+        config = tiny_config(args.expert_model_parallel_size, args.qsa_backend or "dense")
+        if args.require_fused_gdn is not None:
+            config = replace(config, require_fused_gdn=args.require_fused_gdn)
+        if args.moe_expert_backend is not None:
+            config = replace(config, moe_expert_backend=args.moe_expert_backend)
+        return config
     with args.config_json.open(encoding="utf-8") as config_file:
         payload = json.load(config_file)
     config = QwenAirTextConfig.from_hf_dict(payload)
     updates: dict[str, Any] = {
         "expert_model_parallel_size": args.expert_model_parallel_size,
         "calculate_per_token_loss": True,
+        "require_fused_gdn": (
+            args.require_fused_gdn
+            if args.require_fused_gdn is not None
+            else args.config_json is not None
+        ),
     }
     if args.qsa_backend is not None:
         updates["qsa_backend"] = args.qsa_backend
+    if args.moe_expert_backend is not None:
+        updates["moe_expert_backend"] = args.moe_expert_backend
     if args.max_single_rank_ple_elements is not None:
         updates["max_single_rank_ple_elements"] = args.max_single_rank_ple_elements
     if args.max_single_rank_parameters is not None:
@@ -427,7 +439,7 @@ def run_training(args: argparse.Namespace, config: QwenAirTextConfig) -> dict[st
     return result
 
 
-def parse_args() -> argparse.Namespace:
+def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
     """Parse functional-gate and target-config training options."""
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config-json", type=Path)
@@ -435,8 +447,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--qsa-backend", choices=("dense", "te_reference", "te_indexed_sdpa", "te_triton")
     )
+    parser.add_argument("--moe-expert-backend", choices=("loop", "te_grouped"))
     parser.add_argument("--max-single-rank-ple-elements", type=int)
     parser.add_argument("--max-single-rank-parameters", type=int)
+    parser.add_argument(
+        "--require-fused-gdn",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Fail unless CUDA BF16/FP16 uses FLA; defaults on for --config-json",
+    )
     parser.add_argument("--micro-batch-size", type=int, default=1)
     parser.add_argument("--sequence-length", type=int, default=8)
     parser.add_argument("--steps", type=int, default=2)
@@ -450,7 +469,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-json", type=Path)
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--world-size", type=int)
-    return parser.parse_args()
+    return parser.parse_args(argv)
 
 
 def main() -> None:

@@ -4,14 +4,21 @@
 
 from __future__ import annotations
 
+import logging
 import math
 
 import torch
+import torch.distributed as dist
 from torch import Tensor, nn
 from torch.nn import functional as F
 
+from megatron.core.ssm.gated_delta_net.common import HAVE_FLA, chunk_gated_delta_rule
+
 from .config import QwenAirTextConfig
 from .initialization import initialize_qwenair_expert_normal_
+
+logger = logging.getLogger(__name__)
+_REPORTED_GDN_BACKEND = False
 
 
 class QwenAirRMSNorm(nn.Module):
@@ -137,6 +144,7 @@ class QwenAirGatedDeltaNet(nn.Module):
         self.value_dim = self.num_v_heads * self.head_v_dim
         self.conv_dim = 2 * self.key_dim + self.value_dim
         self.conv_kernel_size = config.linear_conv_kernel_dim
+        self.require_fused_gdn = config.require_fused_gdn
         self.conv1d = nn.Conv1d(
             self.conv_dim, self.conv_dim, self.conv_kernel_size,
             groups=self.conv_dim, padding=0, bias=False,
@@ -152,6 +160,8 @@ class QwenAirGatedDeltaNet(nn.Module):
 
     def forward(self, x: Tensor, token_mask: Tensor | None = None) -> Tensor:
         """Evaluate the causal delta-rule recurrence without a persistent cache."""
+        global _REPORTED_GDN_BACKEND
+
         batch, length, _ = x.shape
         if token_mask is not None:
             x = x * token_mask.unsqueeze(-1)
@@ -167,22 +177,50 @@ class QwenAirGatedDeltaNet(nn.Module):
         repeat = self.num_v_heads // self.num_k_heads
         q = q.repeat_interleave(repeat, dim=2)
         k = k.repeat_interleave(repeat, dim=2)
-        q = (q * torch.rsqrt(q.square().sum(dim=-1, keepdim=True) + 1e-6)).float()
-        k = (k * torch.rsqrt(k.square().sum(dim=-1, keepdim=True) + 1e-6)).float()
-        q = q * (1 / math.sqrt(self.head_k_dim))
-        state = torch.zeros(
-            batch, self.num_v_heads, self.head_k_dim, self.head_v_dim,
-            dtype=torch.float32, device=x.device,
+        use_fused_gdn = (
+            HAVE_FLA
+            and chunk_gated_delta_rule is not None
+            and q.is_cuda
+            and q.dtype in (torch.bfloat16, torch.float16)
         )
-        outputs: list[Tensor] = []
-        for step in range(length):
-            key = k[:, step]
-            state = state * decay[:, step].exp().unsqueeze(-1).unsqueeze(-1)
-            prediction = (state * key.unsqueeze(-1)).sum(dim=-2)
-            correction = (v[:, step].float() - prediction) * beta[:, step].unsqueeze(-1)
-            state = state + key.unsqueeze(-1) * correction.unsqueeze(-2)
-            outputs.append((state * q[:, step].unsqueeze(-1)).sum(dim=-2))
-        result = torch.stack(outputs, dim=1).to(x.dtype)
+        if self.require_fused_gdn and not use_fused_gdn:
+            raise RuntimeError(
+                "QwenAir target training requires the FLA chunk gated-delta kernel on CUDA BF16/FP16"
+            )
+        if not _REPORTED_GDN_BACKEND:
+            if not dist.is_initialized() or dist.get_rank() == 0:
+                backend = "fla_chunk" if use_fused_gdn else "token_reference"
+                logger.info("QwenAir GDN training backend: %s", backend)
+            _REPORTED_GDN_BACKEND = True
+        if use_fused_gdn:
+            result, _ = chunk_gated_delta_rule(
+                q.contiguous(),
+                k.contiguous(),
+                v.contiguous(),
+                g=decay.contiguous(),
+                beta=beta.contiguous(),
+                scale=1 / math.sqrt(self.head_k_dim),
+                initial_state=None,
+                output_final_state=False,
+                use_qk_l2norm_in_kernel=True,
+            )
+        else:
+            q = (q * torch.rsqrt(q.square().sum(dim=-1, keepdim=True) + 1e-6)).float()
+            k = (k * torch.rsqrt(k.square().sum(dim=-1, keepdim=True) + 1e-6)).float()
+            q = q * (1 / math.sqrt(self.head_k_dim))
+            state = torch.zeros(
+                batch, self.num_v_heads, self.head_k_dim, self.head_v_dim,
+                dtype=torch.float32, device=x.device,
+            )
+            outputs: list[Tensor] = []
+            for step in range(length):
+                key = k[:, step]
+                state = state * decay[:, step].exp().unsqueeze(-1).unsqueeze(-1)
+                prediction = (state * key.unsqueeze(-1)).sum(dim=-2)
+                correction = (v[:, step].float() - prediction) * beta[:, step].unsqueeze(-1)
+                state = state + key.unsqueeze(-1) * correction.unsqueeze(-2)
+                outputs.append((state * q[:, step].unsqueeze(-1)).sum(dim=-2))
+            result = torch.stack(outputs, dim=1).to(x.dtype)
         result = self.norm(result, z).flatten(-2)
         return self.out_proj(result)
 
