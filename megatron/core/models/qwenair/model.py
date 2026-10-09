@@ -41,6 +41,22 @@ class QwenAirOutput:
     router_logits: tuple[Tensor, ...] | None = None
 
 
+def _validate_te_qsa_token_mask(token_mask: Tensor) -> None:
+    """Reject masks whose visible tokens are not a nonempty prefix.
+
+    TE QSA has no arbitrary attention-mask input. Contiguous right padding is
+    nevertheless safe: causal queries in the valid prefix cannot attend to
+    later padding, while the loss, GDN, PLE, and router auxiliary objective
+    continue to use ``token_mask`` to ignore that padded suffix.
+    """
+    if not bool(torch.all(token_mask.any(dim=-1))):
+        raise NotImplementedError("TE QSA requires at least one valid token in every sequence")
+    if token_mask.shape[1] > 1 and bool(torch.any(token_mask[:, 1:] & ~token_mask[:, :-1])):
+        raise NotImplementedError(
+            "TE QSA supports only unpadded sequences or a contiguous right-padded suffix"
+        )
+
+
 class QwenAirDecoderLayer(nn.Module):
     """A QwenAir GDN/QSA layer with MoE and two gated residual cells."""
 
@@ -179,10 +195,8 @@ class QwenAirTextModel(nn.Module):
         if cos.shape[:2] != (batch, length):
             raise ValueError("position_ids must match input_ids")
         if self.config.qsa_backend in ("te_reference", "te_indexed_sdpa", "te_triton"):
-            if attention_mask is not None and not torch.all(token_mask):
-                raise NotImplementedError(
-                    "TE QSA requires unpacked, unpadded causal sequences"
-                )
+            if attention_mask is not None:
+                _validate_te_qsa_token_mask(token_mask)
             visible = None
         else:
             causal = torch.ones(length, length, device=embeddings.device, dtype=torch.bool).tril()

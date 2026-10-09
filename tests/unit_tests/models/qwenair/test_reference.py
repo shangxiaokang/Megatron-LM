@@ -7,6 +7,7 @@ import torch
 
 from megatron.core.models.qwenair import QwenAirForCausalLM, QwenAirTextConfig
 from megatron.core.models.qwenair.layers import qwenair_global_router_loss
+from megatron.core.models.qwenair.model import _validate_te_qsa_token_mask
 
 
 def tiny_config(**overrides):
@@ -134,6 +135,79 @@ def test_pp1_schedule_input_hook_is_fail_closed():
     model.set_input_tensor((None,))
     with pytest.raises(NotImplementedError, match="PP=1"):
         model.set_input_tensor(torch.zeros(1, 2, model.config.hidden_size))
+
+
+@pytest.mark.parametrize(
+    "token_mask",
+    (
+        torch.tensor([[True, True, True]]),
+        torch.tensor([[True, True, False, False]]),
+        torch.tensor([[True, False, False], [True, True, False]]),
+    ),
+)
+def test_te_qsa_accepts_unpadded_or_right_padded_token_masks(token_mask):
+    """A masked suffix cannot affect earlier causal outputs."""
+    _validate_te_qsa_token_mask(token_mask)
+
+
+@pytest.mark.parametrize(
+    "token_mask",
+    (
+        torch.tensor([[False, True, True]]),
+        torch.tensor([[True, False, True]]),
+        torch.tensor([[False, False, False]]),
+    ),
+)
+def test_te_qsa_rejects_left_gapped_or_empty_token_masks(token_mask):
+    """TE QSA must reject masks that change valid-prefix attention."""
+    with pytest.raises(NotImplementedError, match="right-padded suffix|valid token"):
+        _validate_te_qsa_token_mask(token_mask)
+
+
+def test_right_padding_matches_unpadded_prefix_objective_and_gradients():
+    """A causal right-padded suffix is inert when every objective keeps its mask."""
+    torch.manual_seed(63)
+    model = QwenAirForCausalLM(tiny_config())
+    tokens = torch.tensor([[1, 2, 3, 4, 5, 3, 3, 3]])
+    token_mask = torch.tensor([[True, True, True, True, True, False, False, False]])
+    labels = torch.tensor([[2, 3, 4, 5, -100, -100, -100, -100]])
+
+    padded = model(
+        tokens,
+        attention_mask=token_mask,
+        labels=labels,
+        labels_are_shifted=True,
+        output_router_logits=True,
+    )
+    padded.loss.backward()
+    gradient_names = (
+        "model.embed_tokens.weight",
+        "model.layers.0.linear_attn.in_proj_qkv.weight",
+        "model.layers.1.self_attn.q_proj.weight",
+        "model.layers.1.mlp.gate.weight",
+    )
+    padded_gradients = {
+        name: parameter.grad.detach().clone()
+        for name, parameter in model.named_parameters()
+        if name in gradient_names
+    }
+    model.zero_grad(set_to_none=True)
+
+    unpadded = model(
+        tokens[:, :5],
+        labels=labels[:, :5],
+        labels_are_shifted=True,
+        output_router_logits=True,
+    )
+    unpadded.loss.backward()
+
+    torch.testing.assert_close(padded.logits[:, :5], unpadded.logits)
+    torch.testing.assert_close(padded.loss, unpadded.loss)
+    torch.testing.assert_close(padded.aux_loss, unpadded.aux_loss)
+    parameters = dict(model.named_parameters())
+    assert padded_gradients.keys() == set(gradient_names)
+    for name, padded_gradient in padded_gradients.items():
+        torch.testing.assert_close(padded_gradient, parameters[name].grad)
 
 
 def test_external_visual_embeddings_keep_original_ple_ids_and_gradients():
