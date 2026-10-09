@@ -25,7 +25,7 @@ from megatron.core.models.qwenair import QwenAirForCausalLM, QwenAirTextConfig
 from megatron.core.models.qwenair.layers import qwenair_global_router_loss
 
 
-def _config() -> QwenAirTextConfig:
+def _config(*, expert_model_parallel_size: int = 1) -> QwenAirTextConfig:
     return QwenAirTextConfig(
         vocab_size=64,
         hidden_size=16,
@@ -60,6 +60,7 @@ def _config() -> QwenAirTextConfig:
         eos_token_id=3,
         router_aux_loss_coef=0.1,
         qsa_backend="dense",
+        expert_model_parallel_size=expert_model_parallel_size,
     )
 
 
@@ -214,25 +215,26 @@ def _worker(rank: int, port: int, checkpoint_dir: str) -> None:
         from megatron.core.dist_checkpointing import save as save_sharded
 
         singleton_groups = [dist.new_group(ranks=[group_rank]) for group_rank in range(2)]
-        config = _config()
+        reference_config = _config()
+        parallel_config = _config(expert_model_parallel_size=2)
         torch.manual_seed(20261008)
-        reference = QwenAirForCausalLM(config).to(device).train()
+        reference = QwenAirForCausalLM(reference_config).to(device).train()
         with torch.no_grad():
             for layer in reference.model.layers:
                 layer.mlp.gate.weight.normal_(std=0.2)
         parallel = QwenAirForCausalLM(
-            config, ple_process_group=dist.group.WORLD, ep_group=dist.group.WORLD,
+            parallel_config, ple_process_group=dist.group.WORLD, ep_group=dist.group.WORLD,
             expert_tp_group=singleton_groups[rank],
         ).to(device).train()
         _copy_logical_weights(reference, parallel)
         assert set(reference.state_dict()) == set(parallel.state_dict())
-        _check_combined_shards(parallel, rank, config)
+        _check_combined_shards(parallel, rank, parallel_config)
         reference_optimizer = torch.optim.AdamW(reference.parameters(), lr=1e-3)
         parallel_optimizer = torch.optim.AdamW(parallel.parameters(), lr=1e-3)
 
         _reference_step(
             reference, parallel, reference_optimizer, parallel_optimizer,
-            _tokens(rank, 0, device), config, (9, 13), bf16=False,
+            _tokens(rank, 0, device), parallel_config, (9, 13), bf16=False,
         )
         save_sharded(
             parallel.sharded_state_dict(prefix="qwenair.", metadata={"dp_cp_group": None}),
@@ -249,10 +251,10 @@ def _worker(rank: int, port: int, checkpoint_dir: str) -> None:
         tokens = _tokens(rank, 1, device)
         expected_loss, expected_gradients = _reference_step(
             reference, parallel, reference_optimizer, parallel_optimizer,
-            tokens, config, (10, 14), bf16=True,
+            tokens, parallel_config, (10, 14), bf16=True,
         )
         restored = QwenAirForCausalLM(
-            config, ple_process_group=dist.group.WORLD, ep_group=dist.group.WORLD,
+            parallel_config, ple_process_group=dist.group.WORLD, ep_group=dist.group.WORLD,
             expert_tp_group=singleton_groups[rank],
         ).to(device).train()
         restored_state = load_sharded(
@@ -271,7 +273,7 @@ def _worker(rank: int, port: int, checkpoint_dir: str) -> None:
         reference_optimizer.load_state_dict(reference_checkpoint["optimizer"])
         replay_loss, replay_gradients = _reference_step(
             reference, restored, reference_optimizer, restored_optimizer,
-            tokens, config, (10, 14), bf16=True,
+            tokens, parallel_config, (10, 14), bf16=True,
         )
         torch.testing.assert_close(replay_loss, expected_loss, rtol=0, atol=0)
         for name, gradient in expected_gradients.items():
