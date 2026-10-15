@@ -330,7 +330,10 @@ class GPTModel(LanguageModule, GraphableMegatronModule):
             )
         for name, module in self.named_modules():
             if hasattr(module, 'finish_init'):
-                quant_config = get_quant_config_or_none(name, self.config.quant_recipe)
+                # Constructor names use global layer indices across PP/VP stages;
+                # named_modules() exposes only stage-local ModuleList indices.
+                quant_name = getattr(module, '_precision_search_name', None) or name
+                quant_config = get_quant_config_or_none(quant_name, self.config.quant_recipe)
                 module.finish_init(quant_config)
 
     def set_input_tensor(self, input_tensor: Tensor) -> None:

@@ -7,6 +7,7 @@
 import time
 
 _TRAIN_START_TIME = time.time()  # The earliest we can measure the start time.
+_precision_search_worker = None
 
 # Standard library.
 import argparse
@@ -188,13 +189,13 @@ from .global_vars import (
     get_args,
     get_energy_monitor,
     get_one_logger,
+    get_run_config,
     get_signal_handler,
     get_telemetry,
     get_tensorboard_writer,
     get_timers,
     get_train_state,
     get_wandb_writer,
-    get_run_config,
 )
 from .theoretical_memory_usage import report_theoretical_memory
 from .utils import (
@@ -1958,6 +1959,11 @@ def pretrain(
             ),
         )
     timers('model-and-optimizer-setup').stop()
+    global _precision_search_worker
+    if os.environ.get("MEGATRON_PRECISION_SEARCH_TRIAL"):
+        from tools.precision_search.worker import initialize as initialize_precision_search
+
+        _precision_search_worker = initialize_precision_search(model, args, sys.modules[__name__])
     print_datetime('after model, optimizer, and learning rate ' 'scheduler are built')
     model_cfg = get_model_config(model[0])
 
@@ -2264,6 +2270,9 @@ def pretrain(
             callback_manager=callback_manager,
             is_test=True,
         )
+
+    if _precision_search_worker is not None:
+        _precision_search_worker.finish()
 
     wandb_writer = get_wandb_writer()
     if wandb_writer:
@@ -5027,6 +5036,8 @@ def train(
     _start_otel_train_span()
 
     def _finished_training(iteration):
+        if _precision_search_worker is not None and _precision_search_worker.done:
+            return True
         return (args.train_iters and iteration >= args.train_iters) or (
             args.train_samples and args.consumed_train_samples >= args.train_samples
         )
@@ -5637,6 +5648,8 @@ def evaluate(
     is_test: bool = False,
 ):
     """Evaluation."""
+    if _precision_search_worker is not None:
+        _precision_search_worker.begin_validation(is_test)
     callback_manager = normalize_callbacks(callback_manager)
     args = get_args()
     timers = get_timers()
@@ -5779,6 +5792,9 @@ def evaluate(
                         total_loss_dict[key][1] += len(loss_dicts)
                     else:
                         raise ValueError(f"Invalid value shape: {val[0].shape} for key {key}")
+
+            if _precision_search_worker is not None:
+                _precision_search_worker.record_validation(total_loss_dict, is_test)
 
             args.consumed_valid_samples += eval_batch_size
             train_state.consumed_valid_samples += eval_batch_size
@@ -6020,6 +6036,10 @@ def build_train_valid_test_datasets(build_train_valid_test_datasets_provider, tr
     """Build pretraining datasets."""
     if train_valid_test_num_samples is None:
         train_valid_test_num_samples = get_train_valid_test_num_samples()
+    if _precision_search_worker is not None:
+        train_valid_test_num_samples = _precision_search_worker.reserve_validation_samples(
+            train_valid_test_num_samples
+        )
     print_rank_0(' > datasets target sizes (minimum size):')
     print_rank_0('    train:      {}'.format(train_valid_test_num_samples[0]))
     print_rank_0('    validation: {}'.format(train_valid_test_num_samples[1]))

@@ -1375,6 +1375,7 @@ class TELinear(te.pytorch.Linear):
                 tp_size = 1
                 tp_group_for_te = None
 
+        self._precision_search_name = name
         self.te_quant_params: Optional[TEQuantizationParams] = None
         quant_config = get_quant_config_or_none(name, config.quant_recipe)
         self.finish_init(quant_config)
@@ -1602,6 +1603,7 @@ class TELayerNormColumnParallelLinear(te.pytorch.LayerNormLinear):
         gtp_remat_group = resolve_gtp_remat_group(pg_collection, is_expert)
         self.stride = stride
 
+        self._precision_search_name = name
         self.te_quant_params: Optional[TEQuantizationParams] = None
         quant_config = get_quant_config_or_none(name, config.quant_recipe)
         self.finish_init(quant_config)
@@ -2679,6 +2681,7 @@ if HAVE_TE and is_te_min_version("1.9.0.dev0"):
                     "that exposes the use_grouped_tensor argument."
                 )
 
+            self._precision_search_name = name
             self.te_quant_params: Optional[TEQuantizationParams] = None
             quant_config = get_quant_config_or_none(name, config.quant_recipe)
             self.finish_init(quant_config)
@@ -2902,7 +2905,43 @@ if HAVE_TE and is_te_min_version("1.9.0.dev0"):
             quant_context = _get_fp8_autocast_for_quant_params(self.te_quant_params, self.training)
 
             with quant_context:
+                unpadded_splits = None
+                # GroupedMLP's global fp8/fp4 flags do not reflect local precision
+                # overrides. Pad here when a per-module recipe quantizes ragged
+                # expert inputs, preserving the caller's original token layout.
+                # The grouped-tensor path has its own padding and avoids host splits.
+                if (
+                    self.te_quant_params is not None
+                    and not getattr(self, 'use_grouped_tensor', False)
+                    and FP8GlobalStateManager.is_fp8_enabled()
+                ):
+                    from transformer_engine.pytorch.quantization import (
+                        get_align_size_for_quantization,
+                    )
+
+                    alignment = get_align_size_for_quantization(
+                        FP8GlobalStateManager.get_fp8_recipe()
+                    )
+                    splits = m_splits.tolist() if isinstance(m_splits, torch.Tensor) else m_splits
+                    if any(count % alignment for count in splits):
+                        padding = getattr(self, '_local_quantization_padding', None)
+                        if padding is None:
+                            padding = {}
+                            self._local_quantization_padding = padding
+                        if alignment not in padding:
+                            padding[alignment] = (
+                                Fp8Padding(self.num_gemms, align_size=alignment),
+                                Fp8Unpadding(self.num_gemms, align_size=alignment),
+                            )
+                        pad, unpad = padding[alignment]
+                        unpadded_splits = splits
+                        x, m_splits = pad(x, splits)
                 out = super().forward(x, m_splits, is_first_microbatch=_is_first_microbatch)
+                if unpadded_splits is not None:
+                    if self.te_return_bias:
+                        out = (unpad(out[0], unpadded_splits), out[1])
+                    else:
+                        out = unpad(out, unpadded_splits)
             self.is_first_microbatch = False
 
             # TE only returns a tuple when return_bias is True, otherwise

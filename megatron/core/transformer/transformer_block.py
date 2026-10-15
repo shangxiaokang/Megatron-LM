@@ -374,7 +374,7 @@ class TransformerBlock(GraphableMegatronModule, MegatronModule):
                 # HybridStack already passes names during construction. Keep unnamed
                 # custom layer specs unchanged by omitting the extra keyword argument.
                 layer_kwargs = (
-                    {"name": f"{self.name}.layers.{layer_number - 1}"}
+                    {"name": f"{self.name}.layers.{global_layer_number - 1}"}
                     if self.name is not None
                     else {}
                 )

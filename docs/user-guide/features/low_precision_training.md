@@ -18,6 +18,10 @@ Low-precision support in Megatron Core is built on
 exposes TE recipes through `TransformerConfig` fields (and matching CLI flags)
 so you can switch recipes without touching model code.
 
+To automatically choose static BF16/MXFP8/NVFP4 assignments while keeping the
+existing optimizer and training hyperparameters, see
+[Automatic static precision search](automatic_precision_search.md).
+
 ## When to Use Low Precision
 
 Compared to a BF16 baseline, low precision delivers:

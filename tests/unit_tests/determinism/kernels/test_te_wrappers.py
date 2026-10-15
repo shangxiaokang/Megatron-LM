@@ -21,7 +21,7 @@ from megatron.core.extensions.transformer_engine import HAVE_TE, TEFusedMLP
 from megatron.core.fp8_utils import get_fp8_context, is_mxfp8tensor
 from megatron.core.packed_seq_params import PackedSeqParams
 from megatron.core.process_groups_config import ProcessGroupCollection
-from megatron.core.quantization.quant_config import RecipeConfig
+from megatron.core.quantization.quant_config import MatchContext, QuantizationConfig, RecipeConfig
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.custom_layers.batch_invariant_kernels import (
     set_batch_invariant_mode,
@@ -320,6 +320,64 @@ class TestTEWrappers:
         assert_module_replays_bit_exact(
             module, (x, m_splits), replays=3, contention=True, what="TEGroupedLinear"
         )
+
+    @pytest.mark.skipif(not _IS_BLACKWELL, reason="Local MXFP8/NVFP4 recipes need Blackwell")
+    @pytest.mark.parametrize("precision", ["bf16", "mxfp8", "nvfp4"])
+    def test_local_grouped_recipe_padding_replays(self, precision):
+        """Per-module quantization must preserve ragged expert rows and replay gradients."""
+        seeded()
+        config = _config(
+            hidden_size=256,
+            ffn_hidden_size=512,
+            num_attention_heads=4,
+            num_query_groups=1,
+            kv_channels=64,
+            num_moe_experts=4,
+            moe_grouped_gemm=True,
+            gradient_accumulation_fusion=False,
+            disable_parameter_transpose_cache=True,
+        )
+        module = TEGroupedLinear(
+            4,
+            256,
+            512,
+            parallel_mode=None,
+            config=config,
+            init_method=init_method_normal(0.02),
+            bias=False,
+            skip_bias_add=False,
+            is_expert=True,
+            pg_collection=ProcessGroupCollection.use_mpu_process_groups(),
+        ).cuda()
+        recipe = {"override_nonquantized_autocast": precision != "bf16"}
+        if precision == "mxfp8":
+            recipe["fp8_quantization_recipe"] = "mxfp8"
+        elif precision == "nvfp4":
+            recipe["fp4_quantization_recipe"] = "nvfp4"
+        module.finish_init(
+            QuantizationConfig(
+                {
+                    "transformer_engine_config_type": "TEQuantizationParams",
+                    "training_recipe": recipe,
+                    "evaluation_recipe": recipe,
+                },
+                MatchContext("grouped", 0),
+                precision,
+            )
+        )
+        splits = [37, 67, 0, 119]
+        x = torch.randn(sum(splits), 256, device="cuda", dtype=torch.bfloat16, requires_grad=True)
+        outputs, gradients = assert_module_replays_bit_exact(
+            module,
+            (x, splits),
+            replays=3,
+            contention=True,
+            restore_rng=True,
+            what=f"TEGroupedLinear local {precision} padding",
+        )
+        assert next(iter(outputs.values())).shape == (sum(splits), 512)
+        assert all(torch.isfinite(value).all() for value in gradients.values())
+        assert hasattr(module, "_local_quantization_padding") == (precision != "bf16")
 
     @pytest.mark.internal
     @pytest.mark.launch_on_gb200

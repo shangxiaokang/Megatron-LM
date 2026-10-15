@@ -95,6 +95,11 @@ expressions.
 Matchers are ordered, and the first enabled matcher to match against
 a module name chooses the config from the configs list.
 
+GPT decoder layer names use zero-based global layer indices, including pipeline
+and virtual-pipeline offsets. For example, `decoder.layers.12.mlp.linear_fc1`
+selects the thirteenth decoder layer even when it belongs to another pipeline
+stage; stage-local `ModuleList` indices do not define precision matcher names.
+
 In this example, assuming a default quantization recipe is enabled,
 attention linear modules `linear_qkv` and `linear_proj` are selected
 for the "bf16" recipe override and mamba mixer linear layers `out_proj`

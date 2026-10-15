@@ -173,6 +173,14 @@ KERNELS: Tuple[KernelEntry, ...] = (
         notes="Replays TE's overwrite_input path when supported.",
     ),
     KernelEntry(
+        name="te_grouped_local_recipe_padding",
+        sources=("megatron/core/extensions/transformer_engine.py",),
+        tests=(K + "test_te_wrappers.py",),
+        kind="te-wrapper",
+        notes="Per-module BF16/MXFP8/NVFP4 grouped GEMM replay covers ragged and empty experts, "
+        "fused padding/unpadding, input gradients, and parameter gradients under restored RNG.",
+    ),
+    KernelEntry(
         name="jit_fuser",
         sources=("megatron/core/jit.py",),
         kind="torch.compile",
